@@ -1,0 +1,33 @@
+# ROS 2 & Colcon build directories
+framework_ws/build/
+framework_ws/install/
+framework_ws/log/
+
+# Node / Web / GCS dependencies & build outputs
+node_modules/
+gcs/node_modules/
+gcs/dist/
+gcs/dist-ssr/
+.env*.local
+
+# Python cache & logs
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.log
+
+# ROS bags & recordings
+rosbag/
+rosbags/
+*.db3
+*.mcap
+
+# IDE & Tool configuration / cache
+.claude/
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~

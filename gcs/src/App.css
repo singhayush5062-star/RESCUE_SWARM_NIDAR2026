@@ -1,0 +1,44 @@
+.gcs-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+}
+
+.gcs-header {
+  background: #0a0d12;
+  color: #e6e9ef;
+  padding: 12px 20px;
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid #262c36;
+}
+
+.gcs-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.gcs-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 280px;
+  flex-shrink: 0;
+  padding: 16px;
+  box-sizing: border-box;
+  background: #12161c;
+  color: #e6e9ef;
+  overflow-y: auto;
+}
+
+.gcs-map {
+  flex: 1;
+  position: relative;
+}
+
+.marker-disconnected {
+  filter: grayscale(1) opacity(0.6);
+}

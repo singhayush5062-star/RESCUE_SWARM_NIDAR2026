@@ -1,0 +1,9 @@
+std_msgs/Header header
+uint32 survivor_id
+float64 latitude
+float64 longitude
+float64 altitude
+float32 confidence
+string detecting_drone_id
+bool delivery_assigned
+bool delivery_complete

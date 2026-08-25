@@ -1,0 +1,11 @@
+# Goal
+float64 target_latitude
+float64 target_longitude
+uint32 survivor_id
+---
+# Result
+bool success
+float32 drop_distance_m
+---
+# Feedback
+float32 approach_progress_pct

@@ -1,0 +1,82 @@
+world_name: "empty"
+origin:
+    latitude: 28.682412
+    longitude: 77.499734
+    altitude: 100.0
+drones:
+  - model_type: "px4vision"
+    model_name: "drone0"
+    flight_time: 60
+    xyz:
+      - -2.0
+      - 0.0
+      - 0.2
+    payload:
+      - model_type: "gps"
+        model_name: "gps"
+      - model_type: "gimbal_speed"
+        model_name: "gimbal"
+        payload:
+          model_type: "hd_camera"
+          model_name: "camera"
+  - model_type: "px4vision"
+    model_name: "drone1"
+    flight_time: 60
+    xyz:
+      - 2.0
+      - 0.0
+      - 0.2
+    payload:
+      - model_type: "gps"
+        model_name: "gps"
+      - model_type: "gimbal_speed"
+        model_name: "gimbal"
+        payload:
+          model_type: "hd_camera"
+          model_name: "camera"
+  - model_type: "px4vision"
+    model_name: "drone2"
+    flight_time: 60
+    xyz:
+      - 0.0
+      - 0.0
+      - 0.2
+    payload:
+      - model_type: "gps"
+        model_name: "gps"
+      - model_type: "gimbal_speed"
+        model_name: "gimbal"
+        payload:
+          model_type: "hd_camera"
+          model_name: "camera"
+  - model_type: "px4vision"
+    model_name: "drone3"
+    flight_time: 60
+    xyz:
+      - 0.0
+      - 2.0
+      - 0.2
+    payload:
+      - model_type: "gps"
+        model_name: "gps"
+      - model_type: "gimbal_speed"
+        model_name: "gimbal"
+        payload:
+          model_type: "hd_camera"
+          model_name: "camera"
+
+# --- BEGIN AUTO-GENERATED SURVIVORS (do not edit by hand) ---
+objects:
+  - model_type: "survivor_actor"
+    model_name: "survivor_0"
+    xyz: [8.0, 10.0, 0.0]
+    rpy: [0.0, 0.0, 0.4]
+  - model_type: "survivor_actor"
+    model_name: "survivor_1"
+    xyz: [-10.0, 6.0, 0.0]
+    rpy: [0.0, 0.0, 1.2]
+  - model_type: "survivor_actor"
+    model_name: "survivor_2"
+    xyz: [-6.0, -9.0, 0.0]
+    rpy: [0.0, 0.0, 2.1]
+# --- END AUTO-GENERATED SURVIVORS ---

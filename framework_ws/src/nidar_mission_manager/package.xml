@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nidar_mission_manager</name>
+  <version>0.1.0</version>
+  <description>Boundary-to-coverage mission planning: zone splitting and lawnmower path generation for NIDAR RescueSwarm Phase 1.</description>
+  <maintainer email="singhayush5062@gmail.com">ayush</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <depend>python3-pymap3d</depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -1,0 +1,68 @@
+.status-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rosbridge-status {
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  text-align: center;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rosbridge-status--connected { background: #16351f; color: #4ade80; }
+.rosbridge-status--connecting { background: #3a2f10; color: #fbbf24; }
+.rosbridge-status--disconnected,
+.rosbridge-status--error { background: #3a1414; color: #f87171; }
+
+.drone-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drone-card {
+  background: #1a1f27;
+  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid #262c36;
+}
+
+.drone-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.drone-card__name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.drone-card__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4ade80;
+}
+
+.drone-card.disconnected .drone-card__dot {
+  background: #f87171;
+}
+
+.drone-card__row {
+  font-size: 12px;
+  color: #b7bfcc;
+}
+
+.drone-card__row--muted {
+  color: #6b7280;
+}

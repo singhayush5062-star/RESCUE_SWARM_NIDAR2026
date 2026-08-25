@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <!-- Static human actor for simulated survivor placement (Objective 1).
+       Mesh vendored from Gazebo Fuel (Mingfei/models/actor, stand.dae skin)
+       into meshes/ alongside this file and referenced by a local relative
+       path — not the model's original https://fuel.gazebosim.org/... URLs —
+       so it works fully offline at sim launch, consistent with the mission
+       brief's no-external-network rule. Deliberately static: a single
+       "stand" trajectory whose start and end pose are identical, so the
+       actor holds its pose rather than walking/running the original
+       model's default multi-waypoint patrol loop. -->
+  <actor name="survivor_actor">
+    <!-- z=1.0, not 0: the mesh's skeleton is rigged with its root joint at
+         approximately hip height, not at the feet — this matches the
+         original Fuel model's own pose/trajectory convention (it used the
+         same z=1.0 in every waypoint). Without this offset the root sits at
+         ground level and the feet hang below the ground plane. -->
+    <pose>0 0 1.0 0 0 0</pose>
+    <skin>
+      <filename>meshes/stand.dae</filename>
+      <scale>1.0</scale>
+    </skin>
+    <animation name="stand">
+      <filename>meshes/stand.dae</filename>
+      <scale>1.0</scale>
+      <interpolate_x>true</interpolate_x>
+    </animation>
+    <script>
+      <loop>true</loop>
+      <auto_start>true</auto_start>
+      <trajectory id="0" type="stand">
+        <waypoint>
+          <time>0</time>
+          <pose>0 0 1.0 0 0 0</pose>
+        </waypoint>
+        <waypoint>
+          <time>100</time>
+          <pose>0 0 1.0 0 0 0</pose>
+        </waypoint>
+      </trajectory>
+    </script>
+  </actor>
+</sdf>

@@ -1,0 +1,48 @@
+.map-view-wrapper {
+  position: relative;
+  height: 100%;
+  width: 100%;
+}
+
+.map-view-wrapper--crosshair .leaflet-container {
+  cursor: crosshair;
+}
+
+.map-view-warning {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  background: rgba(127, 29, 29, 0.92);
+  color: #fef2f2;
+  border: 1px solid #ef4444;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  animation: map-view-warning-in 0.25s ease-out, map-view-warning-out 0.3s ease-in 2.7s forwards;
+  pointer-events: none;
+}
+
+@keyframes map-view-warning-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@keyframes map-view-warning-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.survivor-marker-pop {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: survivor-pop-in 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes survivor-pop-in {
+  from { opacity: 0; transform: scale(0.2); }
+  to { opacity: 1; transform: scale(1); }
+}

@@ -1,0 +1,77 @@
+# Simulated survivor placements for the NIDAR RescueSwarm arena.
+#
+# Single source of truth for where survivor models are placed in the sim.
+# To add/remove survivors, just add/remove entries here, then re-run
+# `utils/sync_survivors.py` (or `scripts/run_simulation.sh`, which runs it
+# automatically before every launch) to regenerate world_swarm.yaml's
+# `objects:` block from this file. Don't hand-edit that block directly —
+# it gets overwritten on the next sync.
+#
+# Fields:
+#   name        unique Gazebo model name (must be unique across all survivors)
+#   model_type  which model in project_gazebo/models/ to spawn:
+#                 "survivor"       — static box+sphere placeholder (Phase 0)
+#                 "survivor_actor" — realistic human mesh, vendored from
+#                                    Gazebo Fuel (Mingfei/models/actor, static
+#                                    "stand" pose, no runtime network needed)
+#               Note: actor-type entities don't show up in `gz model --list`
+#               or the `/world/.../scene/graph` debug service (a gap in those
+#               specific CLI tools, not a spawn failure) — verify visually or
+#               via the GUI's own Entity Tree panel instead.
+#   x, y, z     local ENU position in meters, relative to the world origin
+#               (same origin the drones and the state estimator use — see
+#               world_swarm.yaml's `origin:`). All entries here must stay
+#               within [-15, 15] on both x and y to keep every survivor
+#               inside the 30m x 30m test arena (Phase 0.4 requirement).
+#   yaw         rotation about Z in radians. Purely cosmetic for a static
+#               model.
+
+survivors:
+  - name: survivor_0
+    model_type: survivor_actor
+    x: 8.0
+    y: 10.0
+    z: 0.0
+    yaw: 0.4
+  - name: survivor_1
+    model_type: survivor_actor
+    x: -10.0
+    y: 6.0
+    z: 0.0
+    yaw: 1.2
+  - name: survivor_2
+    model_type: survivor_actor
+    x: -6.0
+    y: -9.0
+    z: 0.0
+    yaw: 2.1
+  # - name: survivor_3
+  #   model_type: survivor
+  #   x: 11.0
+  #   y: -7.0
+  #   z: 0.0
+  #   yaw: 0.0
+  # - name: survivor_4
+  #   model_type: survivor
+  #   x: 13.0
+  #   y: 1.0
+  #   z: 0.0
+  #   yaw: 2.8
+  # - name: survivor_5
+  #   model_type: survivor
+  #   x: -13.0
+  #   y: -2.0
+  #   z: 0.0
+  #   yaw: 0.9
+  # - name: survivor_6
+  #   model_type: survivor
+  #   x: 2.0
+  #   y: -13.0
+  #   z: 0.0
+  #   yaw: 1.6
+  # - name: survivor_7
+  #   model_type: survivor
+  #   x: -3.0
+  #   y: 14.0
+  #   z: 0.0
+  #   yaw: 0.3

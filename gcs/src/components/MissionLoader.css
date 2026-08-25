@@ -1,0 +1,100 @@
+.mission-loader {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #262c36;
+  margin-bottom: 4px;
+}
+
+.mission-loader__button {
+  background: #1a1f27;
+  color: #e6e9ef;
+  border: 1px solid #303844;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.mission-loader__button:hover:not(:disabled) {
+  background: #232a34;
+}
+
+.mission-loader__button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mission-loader__button--start {
+  background: #16351f;
+  border-color: #1f5c33;
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.mission-loader__error {
+  color: #f87171;
+  font-size: 12px;
+}
+
+.mission-loader__summary {
+  font-size: 12px;
+  color: #b7bfcc;
+  background: #1a1f27;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.mission-loader__altitude {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #b7bfcc;
+  gap: 8px;
+}
+
+.mission-loader__altitude input {
+  width: 70px;
+  background: #1a1f27;
+  color: #e6e9ef;
+  border: 1px solid #303844;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.mission-loader__pending {
+  font-size: 11.5px;
+  color: #fbbf24;
+  background: #241f10;
+  border-radius: 6px;
+  padding: 8px 10px;
+  line-height: 1.4;
+}
+
+.mission-loader__status {
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #1a1f27;
+}
+
+.mission-loader__status-state {
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  font-size: 11px;
+  color: #8b93a3;
+}
+
+.mission-loader__status--error .mission-loader__status-state { color: #f87171; }
+.mission-loader__status--complete .mission-loader__status-state { color: #4ade80; }
+.mission-loader__status--running .mission-loader__status-state,
+.mission-loader__status--taking_off .mission-loader__status-state,
+.mission-loader__status--starting .mission-loader__status-state,
+.mission-loader__status--landing .mission-loader__status-state { color: #fbbf24; }

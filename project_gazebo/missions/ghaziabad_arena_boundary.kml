@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>NIDAR Arena Boundary</name>
+    <Placemark>
+      <name>Arena Fence</name>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>77.498966,28.6830857,0 77.500502,28.6830857,0 77.500502,28.6817383,0 77.498966,28.6817383,0 77.498966,28.6830857,0</coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>

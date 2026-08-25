@@ -1,0 +1,71 @@
+.drone-control-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px dashed #303844;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
+.drone-control-panel__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #8b93a3;
+  font-weight: 700;
+}
+
+.drone-control-panel__select {
+  background: #1a1f27;
+  color: #e6e9ef;
+  border: 1px solid #303844;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.drone-control-panel__buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.drone-control-panel__button {
+  flex: 1;
+  background: #1a1f27;
+  color: #e6e9ef;
+  border: 1px solid #303844;
+  border-radius: 6px;
+  padding: 8px 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.drone-control-panel__button:hover {
+  background: #232a34;
+}
+
+.drone-control-panel__button--arm {
+  border-color: #1f5c33;
+  color: #4ade80;
+}
+
+.drone-control-panel__button--disarm {
+  border-color: #5c2323;
+  color: #f87171;
+}
+
+.drone-control-panel__button--takeoff {
+  border-color: #5c4a1f;
+  color: #fbbf24;
+}
+
+.drone-control-panel__status {
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #1a1f27;
+}
+
+.drone-control-panel__status--ok { color: #4ade80; }
+.drone-control-panel__status--fail { color: #f87171; }
