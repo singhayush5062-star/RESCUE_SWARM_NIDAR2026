@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  EXPERIMENTAL. Not loaded by default. See scripts/setup_nidar_ros.sh.
+
+  Problem this targets: FastDDS's default shared memory segment is 512 KB,
+  and one camera frame is bigger than that (640x480x3 = 921,600 bytes;
+  1280x960x3 = 3,686,400). A sample that does not fit its segment cannot be
+  delivered over shared memory, and the failure is silent per topic rather
+  than a clean error.
+
+  Status: raising segment_size alone is the right idea, but the tested
+  version of this file also set useBuiltinTransports to false, which replaces
+  the UDP transport that DISCOVERY runs over. Measured live that took the
+  graph from 3/4 drones publishing down to 1/4 and killed every camera
+  stream, so it is disabled pending a version that layers the SHM descriptor
+  on top of the builtins and is re-measured.
+
+  Also still required for the UDP path, and settable only as root:
+      sudo sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216
+  Ubuntu ships 212992 (about 208 KB), far below what DDS wants.
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>nidar_shm</transport_id>
+        <type>SHM</type>
+        <segment_size>8388608</segment_size>
+        <port_queue_capacity>64</port_queue_capacity>
+        <healthy_check_timeout_ms>250</healthy_check_timeout_ms>
+      </transport_descriptor>
+    </transport_descriptors>
+
+    <participant profile_name="nidar_participant" is_default_profile="true">
+      <rtps>
+        <userTransports>
+          <transport_id>nidar_shm</transport_id>
+        </userTransports>
+        <!-- Keep the builtins: discovery runs over them. -->
+        <useBuiltinTransports>true</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>

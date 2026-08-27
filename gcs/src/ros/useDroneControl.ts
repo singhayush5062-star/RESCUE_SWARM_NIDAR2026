@@ -41,6 +41,7 @@ export function useDroneControl() {
         ros,
         name: '/gcs/drone_control/status',
         messageType: 'std_msgs/msg/String',
+        queue_length: 1,
       });
       statusTopic.subscribe((msg) => {
         try {
@@ -64,5 +65,15 @@ export function useDroneControl() {
     commandTopicRef.current?.publish({ data: JSON.stringify(payload) });
   }
 
-  return { statusByDrone, sendCommand };
+  /** Move a landed drone to (lat, lon) immediately, so the operator sees it
+   * happen in Gazebo at placement time rather than only when the mission
+   * starts. The backend re-applies the same positions at mission start, so
+   * the interactive and mission paths stay consistent. */
+  function setLaunchPosition(droneId: string, lat: number, lon: number) {
+    commandTopicRef.current?.publish({
+      data: JSON.stringify({ action: 'set_launch_position', drone_id: droneId, lat, lon }),
+    });
+  }
+
+  return { statusByDrone, sendCommand, setLaunchPosition };
 }

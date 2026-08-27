@@ -4,7 +4,7 @@ import L from 'leaflet';
 import type { DroneTelemetry } from '../types/drone';
 import type { MissionFile } from '../types/mission';
 import type { SurvivorList } from '../ros/useSurvivorControl';
-import { generateDroneWaypointsAtLaunchSite, isPointInPolygon } from '../mission/launchSiteManager';
+import { generateDroneWaypointsAtLaunchSite, isPointInPolygon, launchBoxCorners } from '../mission/launchSiteManager';
 import 'leaflet/dist/leaflet.css';
 import './MapView.css';
 
@@ -40,11 +40,15 @@ interface MapViewProps {
   isDrawingBoundary?: boolean;
   isSettingLaunchSite?: boolean;
   isPlacingSurvivor?: boolean;
+  /** Namespace of the drone currently being positioned by click, or null. */
+  placingDroneNs?: string | null;
   drawnVertices?: [number, number][];
   survivors?: SurvivorList;
   onAddVertex?: (lat: number, lon: number) => void;
   onSetLaunchSite?: (lat: number, lon: number) => void;
   onAddSurvivor?: (lat: number, lon: number) => void;
+  onPlaceDrone?: (ns: string, lat: number, lon: number) => void;
+  onDroneOutOfBox?: () => void;
 }
 
 const DEFAULT_CENTER: [number, number] = [28.682412, 77.499734];
@@ -77,24 +81,41 @@ function MapClickHandler({
   isDrawingBoundary,
   isSettingLaunchSite,
   isPlacingSurvivor,
+  placingDroneNs,
+  launchBox,
   boundary,
   onAddVertex,
   onSetLaunchSite,
   onAddSurvivor,
+  onPlaceDrone,
+  onDroneOutOfBox,
   onOutOfBounds,
 }: {
   isDrawingBoundary?: boolean;
   isSettingLaunchSite?: boolean;
   isPlacingSurvivor?: boolean;
+  placingDroneNs?: string | null;
+  launchBox?: [number, number][] | null;
   boundary?: [number, number][];
   onAddVertex?: (lat: number, lon: number) => void;
   onSetLaunchSite?: (lat: number, lon: number) => void;
   onAddSurvivor?: (lat: number, lon: number) => void;
+  onPlaceDrone?: (ns: string, lat: number, lon: number) => void;
+  onDroneOutOfBox?: () => void;
   onOutOfBounds?: () => void;
 }) {
   useMapEvents({
     click(e) {
-      if (isDrawingBoundary && onAddVertex) {
+      if (placingDroneNs && onPlaceDrone) {
+        // Gate on the 12ft launch box here as well as in the backend, so
+        // the operator gets immediate feedback instead of a mission that
+        // only fails once they press Start.
+        if (launchBox && !isPointInPolygon([e.latlng.lat, e.latlng.lng], launchBox)) {
+          onDroneOutOfBox?.();
+        } else {
+          onPlaceDrone(placingDroneNs, e.latlng.lat, e.latlng.lng);
+        }
+      } else if (isDrawingBoundary && onAddVertex) {
         onAddVertex(e.latlng.lat, e.latlng.lng);
       } else if (isSettingLaunchSite && onSetLaunchSite) {
         onSetLaunchSite(e.latlng.lat, e.latlng.lng);
@@ -119,19 +140,25 @@ export function MapView({
   isDrawingBoundary = false,
   isSettingLaunchSite = false,
   isPlacingSurvivor = false,
+  placingDroneNs = null,
   drawnVertices = [],
   survivors = {},
   onAddVertex,
   onSetLaunchSite,
   onAddSurvivor,
+  onPlaceDrone,
+  onDroneOutOfBox,
 }: MapViewProps) {
   const withGps = drones.filter((d) => d.gps);
   const hasExplicitWaypoints = !!mission?.drones && Object.keys(mission.drones).length > 0;
   const pathsToRender = hasExplicitWaypoints ? mission!.drones! : plannedPaths;
 
-  // Calculate preview drone positions around mission launch site or default center
+  // Preview drone launch positions: the GCS-configured ones actually applied
+  // by the backend (mission.drone_launch_positions) if set, else the default
+  // formation offsets around the launch site.
   const launchSite = mission?.home || DEFAULT_CENTER;
   const dronePreviews = generateDroneWaypointsAtLaunchSite(launchSite[0], launchSite[1]);
+  const configuredLaunchPositions = mission?.drone_launch_positions;
 
   const [outOfBoundsWarning, setOutOfBoundsWarning] = useState(false);
   const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -146,7 +173,8 @@ export function MapView({
     if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
   }, []);
 
-  const isPlacementModeActive = isDrawingBoundary || isSettingLaunchSite || isPlacingSurvivor;
+  const isPlacementModeActive = isDrawingBoundary || isSettingLaunchSite || isPlacingSurvivor || !!placingDroneNs;
+  const launchBox = mission?.home ? launchBoxCorners(mission.home) : null;
 
   return (
     <div className={`map-view-wrapper ${isPlacementModeActive ? 'map-view-wrapper--crosshair' : ''}`}>
@@ -165,6 +193,10 @@ export function MapView({
         isDrawingBoundary={isDrawingBoundary}
         isSettingLaunchSite={isSettingLaunchSite}
         isPlacingSurvivor={isPlacingSurvivor}
+        placingDroneNs={placingDroneNs}
+        launchBox={launchBox}
+        onPlaceDrone={onPlaceDrone}
+        onDroneOutOfBox={onDroneOutOfBox}
         boundary={mission?.boundary}
         onAddVertex={onAddVertex}
         onSetLaunchSite={onSetLaunchSite}
@@ -214,6 +246,17 @@ export function MapView({
             </Popup>
           </CircleMarker>
 
+          {/* Fixed 12ft x 12ft launch/landing box every drone must launch
+              from and land within (competition rule) -- the backend
+              validates and enforces this before teleporting any drone,
+              see mission_executor_node.py's LAUNCH_BOX_SIZE_M. */}
+          {launchBox && (
+            <Polygon
+              positions={launchBox}
+              pathOptions={{ color: '#34d399', weight: 1.5, dashArray: '4 4', fillOpacity: 0.05 }}
+            />
+          )}
+
           {/* Auto-generated per-drone coverage zones */}
           {Object.entries(zones).map(([ns, verts], i) => (
             <Polygon
@@ -234,18 +277,32 @@ export function MapView({
         </>
       )}
 
-      {/* Preview Drone Placement Markers when no active connected telemetry */}
+      {/* Preview Drone Placement Markers when no active connected telemetry.
+          Prefer the GCS-configured positions actually applied by the
+          backend (mission.drone_launch_positions) over the default
+          formation offsets, so what's shown matches what Start will do. */}
       {withGps.length === 0 &&
-        Object.entries(dronePreviews).map(([ns, waypoints], idx) => (
-          <CircleMarker
-            key={`preview-${ns}`}
-            center={waypoints[0]}
-            radius={5}
-            pathOptions={{ color: PLANNED_PATH_COLORS[idx % PLANNED_PATH_COLORS.length], fillOpacity: 0.7 }}
-          >
-            <Popup>Launch Position: {ns}</Popup>
-          </CircleMarker>
-        ))}
+        (configuredLaunchPositions
+          ? Object.entries(configuredLaunchPositions).map(([ns, pos], idx) => (
+              <CircleMarker
+                key={`preview-${ns}`}
+                center={pos}
+                radius={5}
+                pathOptions={{ color: PLANNED_PATH_COLORS[idx % PLANNED_PATH_COLORS.length], fillOpacity: 0.7 }}
+              >
+                <Popup>Launch Position: {ns}</Popup>
+              </CircleMarker>
+            ))
+          : Object.entries(dronePreviews).map(([ns, waypoints], idx) => (
+              <CircleMarker
+                key={`preview-${ns}`}
+                center={waypoints[0]}
+                radius={5}
+                pathOptions={{ color: PLANNED_PATH_COLORS[idx % PLANNED_PATH_COLORS.length], fillOpacity: 0.7 }}
+              >
+                <Popup>Launch Position: {ns} (default)</Popup>
+              </CircleMarker>
+            )))}
 
       {/* Live Connected Telemetry Markers */}
       {withGps.map((drone) => (

@@ -28,6 +28,7 @@ export function useMissionPlannedPaths(resetKey: unknown): PlannedPaths {
         ros: rosConnection.getRos(),
         name: '/gcs/mission/planned_paths',
         messageType: 'std_msgs/msg/String',
+        queue_length: 1,
       });
       topic.subscribe((msg) => {
         try {

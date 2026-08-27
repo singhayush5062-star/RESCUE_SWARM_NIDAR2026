@@ -47,6 +47,7 @@ export function useMissionControl() {
         ros,
         name: '/gcs/mission_status',
         messageType: 'std_msgs/msg/String',
+        queue_length: 1,
       });
       statusTopic.subscribe((msg) => {
         try {
@@ -72,17 +73,18 @@ export function useMissionControl() {
     startTopicRef.current?.publish({ data: 'start' });
   }
 
-  // Lets the operator adjust flight altitude before Start. _on_load just
-  // re-stores whatever it last received, so re-publishing with the edited
-  // value keeps the backend's copy in sync — no new topic needed.
-  function updateAltitude(altitude_m: number) {
+  // Lets the operator adjust altitude/speed/per-drone overrides before
+  // Start. _on_load just re-stores whatever it last received, so
+  // re-publishing with the edited fields keeps the backend's copy in sync —
+  // no new topic needed.
+  function updateMission(patch: Partial<MissionFile>) {
     setLoadedMission((prev) => {
       if (!prev) return prev;
-      const updated = { ...prev, altitude_m };
+      const updated = { ...prev, ...patch };
       loadTopicRef.current?.publish({ data: JSON.stringify(updated) });
       return updated;
     });
   }
 
-  return { status, loadedMission, loadMission, startMission, updateAltitude };
+  return { status, loadedMission, loadMission, startMission, updateMission };
 }

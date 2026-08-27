@@ -65,6 +65,22 @@
   font-size: 13px;
 }
 
+.mission-loader__button--per-drone-toggle {
+  font-size: 11.5px;
+  padding: 6px 10px;
+  color: #8b93a3;
+}
+
+.mission-loader__per-drone {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #1a1f27;
+  border: 1px solid #262c36;
+  border-radius: 6px;
+}
+
 .mission-loader__pending {
   font-size: 11.5px;
   color: #fbbf24;

@@ -1,0 +1,190 @@
+.video-panel {
+  display: flex;
+  flex-direction: column;
+  width: 400px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  background: #12161c;
+  color: #e6e9ef;
+  border-left: 1px solid #262c36;
+  min-height: 0;
+}
+
+/* --- total person count -------------------------------------------- */
+
+.video-panel__header {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid #262c36;
+  background: #0f1319;
+  flex-shrink: 0;
+}
+
+.video-panel__title {
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.video-panel__count {
+  /* The headline number: how many distinct people the swarm has found. */
+  font-variant-numeric: tabular-nums;
+  font-size: 44px;
+  font-weight: 700;
+  line-height: 1.05;
+  color: #86efac;
+}
+
+.video-panel__sub {
+  font-size: 11px;
+  color: #64748b;
+}
+
+/* --- feed grid ------------------------------------------------------ */
+
+.video-panel__feeds {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.video-panel__feed {
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0b1220;
+}
+
+.video-panel__caption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.video-panel__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #475569;
+  flex: 0 0 auto;
+}
+
+.video-panel__dot--live {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.85);
+}
+
+.video-panel__name {
+  font-weight: 600;
+}
+
+.video-panel__tracks {
+  margin-left: auto;
+  color: #93c5fd;
+  font-variant-numeric: tabular-nums;
+}
+
+.video-panel__frame-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.video-panel__frame-btn img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.video-panel__no-signal {
+  padding: 42px 0;
+  text-align: center;
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* --- expanded overlay ----------------------------------------------- */
+
+.video-panel__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(2, 6, 12, 0.86);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  cursor: zoom-out;
+}
+
+.video-panel__overlay-inner {
+  cursor: default;
+  max-width: min(1280px, 92vw);
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #0b1220;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.video-panel__overlay-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  font-size: 13px;
+  background: #111826;
+  color: #e2e8f0;
+}
+
+.video-panel__overlay-bar span {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.video-panel__overlay-bar button {
+  margin-left: auto;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.video-panel__overlay-bar button:hover {
+  background: #334155;
+}
+
+.video-panel__overlay-inner img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 78vh;
+  object-fit: contain;
+  background: #000;
+}
+
+/* On a narrow window the video column would squeeze the map to nothing;
+   drop it under the map instead of shrinking both. */
+@media (max-width: 1200px) {
+  .video-panel {
+    width: 320px;
+  }
+  .video-panel__count {
+    font-size: 34px;
+  }
+}

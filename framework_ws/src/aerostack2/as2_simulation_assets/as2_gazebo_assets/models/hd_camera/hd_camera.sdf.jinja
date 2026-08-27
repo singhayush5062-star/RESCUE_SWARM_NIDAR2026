@@ -26,24 +26,46 @@
         </inertial>
         <sensor name="camera" type="camera">
             <always_on>1</always_on>
-            <update_rate>20</update_rate>
+            <!-- NIDAR: 20 Hz -> 4 Hz. At 1280x960 a raw frame is 3.69 MB, so
+                 20 Hz across four drones is ~295 MB/s pushed through DDS
+                 shared memory. Measured live, the transport cannot sustain
+                 that: Gazebo kept rendering all four cameras correctly while
+                 three of the four ROS image topics went silent, which is what
+                 "the video frames are not working" actually was.
+                 4 Hz is still double nidar_detection's 2 Hz inference rate,
+                 and resolution is left untouched so detection accuracy and
+                 the geotag intrinsics (fx=fy=1108.5) are unaffected. -->
+            <update_rate>4</update_rate>
             <camera name="camera">
                 <horizontal_fov>1.0472</horizontal_fov>
                 <lens>
                     <intrinsics>
-                        <!-- fx = fy = width / ( 2 * tan (hfov / 2 ) ) -->
-                        <fx>1108.5</fx>
-                        <fy>1108.5</fy>
-                        <!-- cx = ( width + 1 ) / 2 -->
-                        <cx>640.5</cx>
-                        <!-- cy = ( height + 1 ) / 2 -->
-                        <cy>480.5</cy>
+                        <!-- MUST be recomputed whenever <width>/<height> below
+                             change. These are published verbatim as
+                             sensor_msgs/CameraInfo.k, and nothing downstream
+                             re-derives them: nidar_detection/projection.py
+                             builds its Intrinsics from CameraInfo, and Phase 3's
+                             geotagging inverts that projection to get lat/lon.
+                             Leave them stale after a resolution change and every
+                             detection is silently geotagged to the wrong place.
+                                 fx = fy = width / ( 2 * tan(hfov/2) )
+                                 cx = (width + 1) / 2 ,  cy = (height + 1) / 2 -->
+                        <fx>554.25</fx>
+                        <fy>554.25</fy>
+                        <cx>320.5</cx>
+                        <cy>240.5</cy>
                         <s>0</s>
                     </intrinsics>
                 </lens>
                 <image>
-                    <width>1280</width>
-                    <height>960</height>
+                    <!-- NIDAR: 1280x960 -> 640x480. A raw frame is width*height*3
+                         bytes and is carried uncompressed over DDS, so this is
+                         the single biggest lever on simulator smoothness:
+                         3.69 MB -> 0.92 MB a frame, i.e. 295 MB/s -> 14.7 MB/s
+                         across four drones once the 4 Hz rate below is applied.
+                         Change both numbers here AND the intrinsics above. -->
+                    <width>640</width>
+                    <height>480</height>
                     <format>R8G8B8</format>
                 </image>
                 <clip>

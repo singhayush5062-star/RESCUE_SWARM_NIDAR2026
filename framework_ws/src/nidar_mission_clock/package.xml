@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nidar_mission_clock</name>
+  <version>0.1.0</version>
+  <description>Mission timing for NIDAR RescueSwarm: measures how long a mission run takes, broken down by phase, and publishes it as a typed nidar_msgs/MissionStatus. Kept out of the mission executor because that node blocks inside AS2 flight calls for minutes at a time and so cannot publish a ticking clock.</description>
+  <maintainer email="singhayush5062@gmail.com">ayush</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>nidar_msgs</depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

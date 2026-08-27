@@ -3,11 +3,12 @@
 <package format="3">
   <name>nidar_mission_manager</name>
   <version>0.1.0</version>
-  <description>Boundary-to-coverage mission planning: zone splitting and lawnmower path generation for NIDAR RescueSwarm Phase 1.</description>
+  <description>Boundary-to-coverage mission planning (zone splitting, lawnmower path generation) and shared world/drone-config parsing for NIDAR RescueSwarm.</description>
   <maintainer email="singhayush5062@gmail.com">ayush</maintainer>
   <license>BSD-3-Clause</license>
 
   <depend>python3-pymap3d</depend>
+  <depend>python3-yaml</depend>
   <test_depend>python3-pytest</test_depend>
 
   <export>

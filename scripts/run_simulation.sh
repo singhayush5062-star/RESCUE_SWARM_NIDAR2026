@@ -2,8 +2,9 @@
 # NIDAR RescueSwarm — single-command full simulation launcher.
 #
 # Brings up: Gazebo + AS2 for every drone in project_gazebo/config/world_swarm.yaml,
-# rosbridge_server, mission_file_executor.py, and the GCS dev server. Ctrl+C tears
-# everything back down. Also syncs survivor placements from
+# rosbridge_server, the nidar_gcs_bridge/nidar_mission_executor/nidar_survivor_manager
+# nodes, and the GCS dev server. Ctrl+C tears everything back down. Also syncs survivor
+# placements from
 # project_gazebo/config/survivors.yaml before every launch — edit that file to
 # add/remove/move survivors, not world_swarm.yaml's auto-generated objects: block.
 #
@@ -23,7 +24,7 @@
 #     scripts.
 #   - Full process-tree kill before AND after (this session, repeatedly):
 #     `tmux kill-server` does not reliably kill the `ros2 launch` process
-#     trees underneath it, and a stale mission_file_executor.py left running
+#     trees underneath it, and a stale mission_executor_node left running
 #     from a previous session will race a fresh one for control of the same
 #     drones and silently corrupt results.
 #   - Default to every drone in world_swarm.yaml, not a hardcoded subset:
@@ -41,6 +42,56 @@ GCS_DIR="$NIDAR_ROOT/gcs"
 LOG_DIR="/tmp/nidar_sim_logs"
 GCS_PORT="${GCS_PORT:-5173}"
 DRONES="${1:-}"
+# Gazebo's own GUI (rendering, not the physics/sensor server) is a heavy,
+# separate process per launch and buys nothing for the actual workflow --
+# operators interact through the GCS web map, not the Gazebo 3D viewport.
+# Defaults to headless (server only) since a 4-drone full stack has
+# repeatedly pushed this machine into severe resource contention (load
+# average 40-60+, confirmed live) that degrades AS2's own timing-sensitive
+# behaviors (arm/offboard state propagation, takeoff acceptance) badly
+# enough to cause real mission failures independent of any code bug.
+# Set NIDAR_GUI=true to opt back into the GUI for visual debugging.
+NIDAR_GUI="${NIDAR_GUI:-false}"
+# DDS middleware. Defaults to CycloneDDS, not the ROS 2 default FastDDS.
+#
+# A 4-drone AS2 stack plus detection is ~100 DDS participants on one machine.
+# FastDDS gives every participant its own shared-memory port lock file in
+# /dev/shm and, at that scale, new participants start failing to acquire one:
+#   [RTPS_TRANSPORT_SHM Error] Failed init_port fastrtps_port7661:
+#   open_and_lock_file failed
+# Nodes still start and log "ready", but come up only partially connected --
+# confirmed live, with 371 shm files (and 7 GB of /dev/shm still free, so it
+# is contention, not capacity): gcs_bridge hit it at startup, and a
+# subscriber could match only 1 of 4 camera feeds. Silent half-connection is
+# the worst possible failure mode here, and it is what "the video feed does
+# not show up" and "the mission never started" both looked like.
+#
+# CycloneDDS was tried as a fix (it has no per-participant SHM port locks)
+# and does solve discovery -- all four drones' GPS streamed, where FastDDS had
+# left drone1 and drone3 silent. But it drops the raw 1280x960 camera images
+# (3.6 MB a frame) entirely without buffer tuning: every detection node
+# reported "no camera frames received yet". That trades an intermittent
+# problem for a total one, so FastDDS stays the default.
+#
+# NIDAR_RMW=rmw_cyclonedds_cpp switches, for debugging discovery problems
+# where the camera is not needed. Making it work properly for images needs
+# CYCLONEDDS_URI with a raised MaxMessageSize and socket buffers.
+export RMW_IMPLEMENTATION="${NIDAR_RMW:-rmw_fastrtps_cpp}"
+LAUNCH_AS2_ARGS=(-m -n "$DRONES")
+if [[ "$NIDAR_GUI" != "true" ]]; then
+  LAUNCH_AS2_ARGS=(-e "${LAUNCH_AS2_ARGS[@]}")
+fi
+
+# tmuxinator (which launch_as2.bash uses to bring up the per-drone AS2 stack)
+# shells out to tmux, and tmux refuses to run under TERM=dumb with
+# "open terminal failed: not a terminal". A non-interactive caller -- nohup,
+# a CI runner, an agent shell -- often inherits exactly that, and the failure
+# is easy to misread: the script still prints "simulation is up" because
+# rosbridge and the nidar nodes start fine, while Gazebo and every drone
+# never launched at all. Confirmed live: sim.log held only that one line.
+if [[ -z "${TERM:-}" || "$TERM" == "dumb" || "$TERM" == "unknown" ]]; then
+  export TERM=xterm-256color
+fi
 
 mkdir -p "$LOG_DIR"
 
@@ -58,7 +109,21 @@ stop_all() {
   pkill -9 -f "as2_" 2>/dev/null
   pkill -9 -f "rosbridge_websocket" 2>/dev/null
   pkill -9 -f "rosapi_node" 2>/dev/null
-  pkill -9 -f "mission_file_executor.py" 2>/dev/null
+  # mission_file_executor.py was split into 3 single-responsibility ROS 2
+  # packages (see DOCUMENTS/standard_implementation_plan_ros2_framework.md)
+  # each launched via `ros2 run` as its own binary -- same orphaning risk
+  # as parameter_bridge/static_transform_publisher below, so each needs its
+  # own explicit pattern rather than relying on the "ros2 run" pkill above.
+  pkill -9 -f "gcs_bridge_node" 2>/dev/null
+  pkill -9 -f "mission_executor_node" 2>/dev/null
+  pkill -9 -f "survivor_manager_node" 2>/dev/null
+  pkill -9 -f "mission_clock_node" 2>/dev/null
+  pkill -9 -f "detection_node" 2>/dev/null
+  # nidar_detection also ships a dataset-capture tool that arms and flies a
+  # drone. It is run by hand rather than by this script, but it must still be
+  # killed here -- confirmed live, three orphaned copies survived a stop and
+  # sat holding DDS participants plus a live drone interface.
+  pkill -9 -f "dataset_capture_node" 2>/dev/null
   pkill -9 -f "ros2 launch" 2>/dev/null
   pkill -9 -f "ros2 run" 2>/dev/null
   # `ros_gz_bridge`'s parameter_bridge is spawned by `ros2 launch` as a
@@ -100,8 +165,39 @@ stop_all() {
   # hang under the exact contention this cleanup exists to fix (confirmed
   # hanging indefinitely mid-testing).
   pkill -9 -f "ros2-daemon" 2>/dev/null
-  rm -f /dev/shm/fastrtps_* 2>/dev/null
-  sleep 2
+
+  # sem.fastrtps_* too, not just fastrtps_*: the port *lock* files are the
+  # ones that actually exhaust the pool. Confirmed live -- 93 stale
+  # segments survived this cleanup because it only removed the segments and
+  # left every sem.fastrtps_port#### behind, and a freshly-launched sim
+  # then published zero camera frames while every new node logged
+  # "Failed init_port fastrtps_port####: open_and_lock_file failed".
+  rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null
+
+  # Verify the teardown actually finished instead of assuming a fixed sleep
+  # was long enough. A launch that begins while the previous sim is still
+  # dying ends up with BOTH running: confirmed live, a fresh sim came up
+  # beside a stale one and their detection nodes fought for the same camera
+  # topics -- two nodes reported 16721 frames seen while the two new ones
+  # reported 1. From the outside that looks exactly like "the simulation is
+  # not starting" and "the video frames are not working".
+  #
+  # The shm cleanup above also only helps if it runs when everything is
+  # really dead; re-running it after the wait catches anything that released
+  # its segments on the way out.
+  local pattern='gz sim|as2_|parameter_bridge|static_transform_publisher|detection_node|dataset_capture_node|lib/nidar_|rosbridge_websocket'
+  local remaining=0
+  for _ in $(seq 1 20); do
+    remaining=$(pgrep -f "$pattern" 2>/dev/null | grep -vc "^$$\$" || true)
+    [[ "${remaining:-0}" -eq 0 ]] && break
+    sleep 1
+  done
+  if [[ "${remaining:-0}" -ne 0 ]]; then
+    log "WARNING: $remaining simulation process(es) survived teardown; killing again"
+    pkill -9 -f "$pattern" 2>/dev/null
+    sleep 2
+  fi
+  rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null
   return 0
 }
 
@@ -137,7 +233,7 @@ log "Drones: $DRONES"
 # 4. Gazebo + AS2 stack for every drone
 # ---------------------------------------------------------------------------
 log "Launching Gazebo + AS2 (this takes ~15-20s)..."
-nohup ./launch_as2.bash -m -n "$DRONES" > "$LOG_DIR/sim.log" 2>&1 &
+nohup ./launch_as2.bash "${LAUNCH_AS2_ARGS[@]}" > "$LOG_DIR/sim.log" 2>&1 &
 
 IFS=',' read -r -a DRONE_ARR <<< "$DRONES"
 
@@ -201,13 +297,49 @@ done
 log "rosbridge is up on ws://localhost:9090."
 
 # ---------------------------------------------------------------------------
-# 6. Mission executor — exactly one instance, or the GCS's mission_load/
-#    mission_start topics race between old and new instances (see header).
+# 6. NIDAR nodes — gcs_bridge (GCS <-> typed /nidar/* topics), mission_executor
+#    (flight orchestration + manual drone control), survivor_manager (runtime
+#    Gazebo survivor spawn/remove), mission_clock (mission elapsed time +
+#    per-phase breakdown). Exactly one instance of each, or the GCS's
+#    mission_load/mission_start topics race between old and new instances
+#    (see header). Split out of the old single mission_file_executor.py --
+#    see DOCUMENTS/standard_implementation_plan_ros2_framework.md.
 # ---------------------------------------------------------------------------
-log "Starting mission_file_executor.py..."
-nohup python3 -u mission_file_executor.py > "$LOG_DIR/executor.log" 2>&1 &
+log "Starting NIDAR nodes (gcs_bridge, mission_executor, survivor_manager, mission_clock)..."
+nohup ros2 run nidar_mission_executor mission_executor_node > "$LOG_DIR/mission_executor.log" 2>&1 &
+nohup ros2 run nidar_survivor_manager survivor_manager_node > "$LOG_DIR/survivor_manager.log" 2>&1 &
+nohup ros2 run nidar_gcs_bridge gcs_bridge_node --ros-args \
+  -p "drone_ids:=[$(echo "$DRONES" | sed 's/[^,]*/"&"/g')]" > "$LOG_DIR/gcs_bridge.log" 2>&1 &
+nohup ros2 run nidar_mission_clock mission_clock_node > "$LOG_DIR/mission_clock.log" 2>&1 &
 sleep 2
-log "Mission executor is up."
+log "NIDAR nodes are up."
+
+# ---------------------------------------------------------------------------
+# 6b. Detection (Phase 2) — one node per drone, each on its own camera.
+#     ON by default. It was opt-in at first (a YOLO model per drone on a
+#     shared GPU is not free), but that meant a normal launch produced no
+#     detection topics at all and the GCS camera panel sat on "No signal"
+#     with nothing in any log to explain why -- confirmed live, a whole run
+#     with no detection.log because the nodes were simply never started.
+#     Detection is the point of Phase 2; make it the default and let it be
+#     turned OFF explicitly instead. NIDAR_DETECTION=false skips it.
+# ---------------------------------------------------------------------------
+NIDAR_DETECTION="${NIDAR_DETECTION:-true}"
+if [[ "$NIDAR_DETECTION" == "true" ]]; then
+  DETECTION_MODEL="${NIDAR_DETECTION_MODEL:-$PROJECT_GAZEBO/models/detection/nidar_person.pt}"
+  if [[ ! -f "$DETECTION_MODEL" ]]; then
+    log "WARNING: detection model not found at $DETECTION_MODEL — skipping detection nodes"
+  else
+    log "Starting detection nodes (model: $(basename "$DETECTION_MODEL"))..."
+    nohup ros2 launch nidar_detection detection.launch.py \
+      "drone_ids:=$DRONES" "model_path:=$DETECTION_MODEL" \
+      "inference_rate_hz:=${NIDAR_DETECTION_HZ:-2.0}" \
+      "confidence_threshold:=${NIDAR_DETECTION_CONF:-0.5}" \
+      > "$LOG_DIR/detection.log" 2>&1 &
+    sleep 3
+    log "Detection nodes are up."
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 7. GCS dev server

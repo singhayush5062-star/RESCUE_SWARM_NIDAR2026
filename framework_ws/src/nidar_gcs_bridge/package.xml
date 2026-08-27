@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nidar_gcs_bridge</name>
+  <version>0.1.0</version>
+  <description>Translates between the GCS's JSON-over-std_msgs/String rosbridge topics and NIDAR's typed internal ROS 2 messages. The only node that knows the GCS wire format.</description>
+  <maintainer email="singhayush5062@gmail.com">ayush</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>nidar_msgs</depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

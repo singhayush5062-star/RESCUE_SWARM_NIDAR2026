@@ -14,6 +14,15 @@ export interface MissionFile {
   home: [number, number];
   altitude_m?: number;
   speed_mps?: number;
+  /** Per-drone flight-altitude override (namespace -> meters), falling back
+   * to altitude_m for any drone not listed here. */
+  drone_altitudes?: Record<string, number>;
+  /** Per-drone launch position (namespace -> [lat, lon]) within the fixed
+   * 12ft x 12ft launch/landing box centered on `home`. Any drone not listed
+   * launches from its default world-config position. The backend teleports
+   * each listed drone there before arming (no sim restart) and rejects the
+   * mission if a position falls outside the box. */
+  drone_launch_positions?: Record<string, [number, number]>;
   drones?: Record<string, [number, number][]>;
 }
 
@@ -23,6 +32,7 @@ export type MissionStatusState =
   | 'starting'
   | 'taking_off'
   | 'running'
+  | 'returning'
   | 'landing'
   | 'complete'
   | 'error';

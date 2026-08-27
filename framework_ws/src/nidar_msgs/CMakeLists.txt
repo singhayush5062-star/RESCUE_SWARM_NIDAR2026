@@ -20,6 +20,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ZoneAllocation.msg"
   "msg/MissionStatus.msg"
   "msg/DeliveryStatus.msg"
+  "msg/MissionCommand.msg"
+  "msg/DroneCommand.msg"
+  "msg/SurvivorCommand.msg"
   "action/PayloadRelease.action"
   DEPENDENCIES std_msgs geometry_msgs geographic_msgs action_msgs
 )

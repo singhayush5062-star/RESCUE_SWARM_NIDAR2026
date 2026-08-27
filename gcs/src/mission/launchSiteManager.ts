@@ -83,6 +83,26 @@ export function generateRandomLaunchSiteInKml(polygon: [number, number][]): [num
 }
 
 /**
+ * Approximate area in square meters of a [lat, lon] polygon, via the shoelace
+ * formula on an equirectangular projection (same METERS_PER_DEGREE_LAT
+ * approximation used throughout this module) -- accurate enough at survey-arena
+ * scale, not meant for anything approaching a meaningful fraction of the globe.
+ */
+export function calculatePolygonAreaM2(polygon: [number, number][]): number {
+  if (!polygon || polygon.length < 3) return 0;
+  const cosLat = Math.cos((calculateCentroid(polygon)[0] * Math.PI) / 180.0);
+  const points = polygon.map(([lat, lon]) => [
+    lon * METERS_PER_DEGREE_LAT * cosLat,
+    lat * METERS_PER_DEGREE_LAT,
+  ]);
+  let sum = 0;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    sum += points[j][0] * points[i][1] - points[i][0] * points[j][1];
+  }
+  return Math.abs(sum) / 2.0;
+}
+
+/**
  * Approximate great-circle-ish distance in meters between two [lat, lon] points,
  * accurate enough at the scale of a survey arena (equirectangular approximation,
  * same METERS_PER_DEGREE_LAT constant used throughout this module).
@@ -128,19 +148,83 @@ export function generateRandomPointsInPolygon(
   return points;
 }
 
+const FEET_TO_METERS = 0.3048;
+/** Fixed launch/landing area every drone must launch from and land within
+ * (competition rule) -- matches LAUNCH_BOX_SIZE_M in
+ * nidar_mission_executor/mission_executor_node.py, which validates against
+ * and enforces this before teleporting any drone there. */
+export const LAUNCH_BOX_SIZE_FT = 12;
+export const LAUNCH_BOX_SIZE_M = LAUNCH_BOX_SIZE_FT * FEET_TO_METERS;
+
 /**
- * Default starting relative offsets (in meters [dx, dy]) for drones in launch formation around Home.
- * drone0: (-2m, 0m)
- * drone1: (2m, 0m)
- * drone2: (0m, 0m)
- * drone3: (0m, 2m)
+ * Default starting relative offsets (in meters [dx, dy]) for drones in
+ * launch formation around Home -- corners of a 3.2m square, matching
+ * world_swarm.yaml's own default spawn xyz, safely inside the 12ft box.
  */
 const DEFAULT_DRONE_OFFSETS: Record<string, [number, number]> = {
-  drone0: [-2.0, 0.0],
-  drone1: [2.0, 0.0],
-  drone2: [0.0, 0.0],
-  drone3: [0.0, 2.0],
+  drone0: [-1.6, -1.6],
+  drone1: [1.6, -1.6],
+  drone2: [-1.6, 1.6],
+  drone3: [1.6, 1.6],
 };
+
+/**
+ * Corners of the fixed 12ft x 12ft launch/landing box, centered on `center`.
+ */
+export function launchBoxCorners(center: [number, number]): [number, number][] {
+  const half = LAUNCH_BOX_SIZE_M / 2;
+  const cosLat = Math.cos((center[0] * Math.PI) / 180.0);
+  const dLat = half / METERS_PER_DEGREE_LAT;
+  const dLon = half / (METERS_PER_DEGREE_LAT * cosLat);
+  const [lat, lon] = center;
+  return [
+    [lat - dLat, lon - dLon],
+    [lat - dLat, lon + dLon],
+    [lat + dLat, lon + dLon],
+    [lat + dLat, lon - dLon],
+  ];
+}
+
+/**
+ * The default drone formation (DEFAULT_DRONE_OFFSETS, the corners of a 3.2m
+ * square) expressed as absolute [lat, lon] around a launch-box centre.
+ */
+export function defaultDroneLaunchPositions(
+  center: [number, number],
+  droneNamespaces: string[] = ['drone0', 'drone1', 'drone2', 'drone3'],
+): Record<string, [number, number]> {
+  const cosLat = Math.cos((center[0] * Math.PI) / 180.0);
+  const result: Record<string, [number, number]> = {};
+  droneNamespaces.forEach((ns, i) => {
+    const [dx, dy] = DEFAULT_DRONE_OFFSETS[ns] ?? [((i % 2) * 2 - 1) * 1.6, (Math.floor(i / 2) * 2 - 1) * 1.6];
+    result[ns] = [
+      center[0] + dy / METERS_PER_DEGREE_LAT,
+      center[1] + dx / (METERS_PER_DEGREE_LAT * cosLat),
+    ];
+  });
+  return result;
+}
+
+/**
+ * Random per-drone launch positions inside the fixed 12ft launch box, with
+ * enough separation to keep drones' rotors clear of each other at spawn.
+ * Reuses generateRandomPointsInPolygon (defined below) against the box's
+ * own corners as its polygon -- same random-with-minimum-separation
+ * mechanism already used for scattering survivor dummies, just constrained
+ * to a small fixed square instead of the mapping boundary.
+ */
+export function generateRandomDroneLaunchPositions(
+  center: [number, number],
+  droneNamespaces: string[] = ['drone0', 'drone1', 'drone2', 'drone3'],
+  minSeparationM: number = 1.0,
+): Record<string, [number, number]> {
+  const points = generateRandomPointsInPolygon(launchBoxCorners(center), droneNamespaces.length, minSeparationM);
+  const result: Record<string, [number, number]> = {};
+  droneNamespaces.forEach((ns, i) => {
+    if (points[i]) result[ns] = points[i];
+  });
+  return result;
+}
 
 /**
  * Calculates GPS waypoints for a list of drone namespaces centered around a Home Launch Site [homeLat, homeLon].

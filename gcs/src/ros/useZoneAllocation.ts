@@ -23,6 +23,7 @@ export function useZoneAllocation(resetKey: unknown): ZoneAllocations {
         ros: rosConnection.getRos(),
         name: '/gcs/mission/zone_allocation',
         messageType: 'nidar_msgs/msg/ZoneAllocation',
+        queue_length: 1,
       });
       topic.subscribe((msg: any) => {
         // geographic_msgs/GeoPoint entries arrive as {latitude, longitude,

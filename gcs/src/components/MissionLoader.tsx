@@ -4,17 +4,22 @@ import type { MissionFile, MissionStatus } from '../types/mission';
 import './MissionLoader.css';
 
 const DEFAULT_SCAN_ALTITUDE_M = 25;
+const DEFAULT_SPEED_MPS = 2.0;
 
 interface MissionLoaderProps {
   loadedMission: MissionFile | null;
   status: MissionStatus | null;
+  droneNamespaces: string[];
   onLoad: (mission: MissionFile) => void;
   onStart: () => void;
-  onAltitudeChange: (altitude_m: number) => void;
+  onMissionChange: (patch: Partial<MissionFile>) => void;
 }
 
-export function MissionLoader({ loadedMission, status, onLoad, onStart, onAltitudeChange }: MissionLoaderProps) {
+export function MissionLoader({
+  loadedMission, status, droneNamespaces, onLoad, onStart, onMissionChange,
+}: MissionLoaderProps) {
   const [error, setError] = useState<string | null>(null);
+  const [showPerDrone, setShowPerDrone] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -36,6 +41,13 @@ export function MissionLoader({ loadedMission, status, onLoad, onStart, onAltitu
   const hasBoundary = !!loadedMission?.boundary && loadedMission.boundary.length >= 3;
   const canStart = loadedMission !== null && (hasWaypoints || hasBoundary) && (status === null || status.state === 'loaded');
   const isRunning = status !== null && !['idle', 'loaded', 'complete', 'error'].includes(status.state);
+  const showFlightParams = loadedMission && (hasWaypoints || hasBoundary);
+
+  function setDroneAltitude(ns: string, value: number) {
+    onMissionChange({
+      drone_altitudes: { ...(loadedMission?.drone_altitudes ?? {}), [ns]: value },
+    });
+  }
 
   return (
     <div className="mission-loader">
@@ -51,7 +63,7 @@ export function MissionLoader({ loadedMission, status, onLoad, onStart, onAltitu
           <strong>{loadedMission.mission_name}</strong>
           <div>
             {hasWaypoints
-              ? `${droneCount} drone(s) · alt ${loadedMission.altitude_m}m`
+              ? `${droneCount} drone(s) · alt ${loadedMission.altitude_m}m · ${loadedMission.speed_mps ?? DEFAULT_SPEED_MPS}m/s`
               : 'Boundary only — no flight paths yet'}
           </div>
         </div>
@@ -64,21 +76,67 @@ export function MissionLoader({ loadedMission, status, onLoad, onStart, onAltitu
         </div>
       )}
 
-      {loadedMission && (hasWaypoints || hasBoundary) && (
-        <label className="mission-loader__altitude">
-          Flight altitude (m)
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={loadedMission.altitude_m ?? DEFAULT_SCAN_ALTITUDE_M}
+      {showFlightParams && (
+        <>
+          <label className="mission-loader__altitude">
+            Flight altitude (m)
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={loadedMission.altitude_m ?? DEFAULT_SCAN_ALTITUDE_M}
+              disabled={isRunning}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                if (!Number.isNaN(value) && value > 0) onMissionChange({ altitude_m: value });
+              }}
+            />
+          </label>
+
+          <label className="mission-loader__altitude">
+            Flight speed (m/s)
+            <input
+              type="number"
+              min={0.1}
+              step={0.1}
+              value={loadedMission.speed_mps ?? DEFAULT_SPEED_MPS}
+              disabled={isRunning}
+              onChange={(e) => {
+                const value = Number(e.target.value);
+                if (!Number.isNaN(value) && value > 0) onMissionChange({ speed_mps: value });
+              }}
+            />
+          </label>
+
+          <button
+            className="mission-loader__button mission-loader__button--per-drone-toggle"
+            onClick={() => setShowPerDrone((v) => !v)}
             disabled={isRunning}
-            onChange={(e) => {
-              const value = Number(e.target.value);
-              if (!Number.isNaN(value) && value > 0) onAltitudeChange(value);
-            }}
-          />
-        </label>
+          >
+            {showPerDrone ? 'Hide' : 'Adjust'} per-drone altitude
+          </button>
+
+          {showPerDrone && (
+            <div className="mission-loader__per-drone">
+              {droneNamespaces.map((ns) => (
+                <label key={ns} className="mission-loader__altitude">
+                  {ns}
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={loadedMission.drone_altitudes?.[ns] ?? loadedMission.altitude_m ?? DEFAULT_SCAN_ALTITUDE_M}
+                    disabled={isRunning}
+                    onChange={(e) => {
+                      const value = Number(e.target.value);
+                      if (!Number.isNaN(value) && value > 0) setDroneAltitude(ns, value);
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       <button className="mission-loader__button mission-loader__button--start" onClick={onStart} disabled={!canStart}>

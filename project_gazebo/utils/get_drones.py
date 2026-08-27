@@ -28,75 +28,23 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Get drones names from config file."""
+"""CLI shim over nidar_mission_manager.world_config.get_drones_namespaces.
+
+Kept as a standalone script (not folded away) because run_simulation.sh
+calls it directly: `python3 utils/get_drones.py -p config/world_swarm.yaml
+--sep ','`. The actual parsing logic lives in nidar_mission_manager so it
+has one shared implementation with the ROS 2 nodes that need the same
+drone list -- see DOCUMENTS/standard_implementation_plan_ros2_framework.md.
+"""
 
 __authors__ = 'Rafael Perez-Segui, Pedro Arias-Perez'
 __copyright__ = 'Copyright (c) 2024 Universidad Politécnica de Madrid'
 __license__ = 'BSD-3-Clause'
 
 import argparse
-import json
 from pathlib import Path
 
-import yaml
-
-
-def read_file(filename: Path) -> str:
-    """
-    Read file content.
-
-    :param filename: Path to file
-    :type filename: Path
-    :return: File content
-    :rtype: str
-    """
-    filename = str(filename)
-    # Check extension of config file
-    if filename.endswith('.json'):
-        with open(filename, 'r', encoding='utf-8') as stream:
-            config = json.load(stream)
-    elif filename.endswith('.yaml') or filename.endswith('.yml'):
-        with open(filename, 'r', encoding='utf-8') as stream:
-            config = yaml.safe_load(stream)
-    else:
-        raise ValueError('Invalid configuration file extension.')
-    return config
-
-
-def get_drones_namespaces(filename: Path) -> list[str]:
-    """
-    Get drone namespaces listed in config file (JSON or YAML).
-
-    Open file, read as JSON or YAML depending on file extension, and return namespaces as list
-
-    :param filename: Path to drones config file
-    :type filename: Path
-    :return: List of drone namespaces
-    :rtype: list[str]
-    """
-    config = read_file(filename)
-    drones_namespaces = []
-
-    # For Gazebo and PX4 SITL
-    if 'drones' in config:
-        for drone in config['drones']:
-            # Gazebo
-            if 'model_name' in drone:
-                drones_namespaces.append(drone['model_name'])
-            # PX4 SITL
-            elif 'namespace' in drone:
-                drones_namespaces.append(drone['namespace'])
-    # AS2 Multirotor Simulator
-    else:
-        for drone in config:
-            if drone == '/**':
-                continue
-            drones_namespaces.append(drone)
-
-    if len(drones_namespaces) == 0:
-        raise ValueError('No drones found in config file')
-    return drones_namespaces
-
+from nidar_mission_manager.world_config import get_drones_namespaces
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

@@ -6,6 +6,7 @@ usage() {
     echo "      -n: select drones namespace to launch, values are comma separated. By default, it will get all drones from world description file"
     echo "      -s: if set, the simulation will not be launched. Default launch simulation"
     echo "      -g: launch using gnome-terminal instead of tmux. Default not set"
+    echo "      -e: launch Gazebo headless (server only, no GUI rendering). Default not set"
 }
 
 # Initialize variables with default values
@@ -13,9 +14,10 @@ swarm="false"
 drones_namespace_comma=""
 launch_simulation="true"
 use_gnome="false"
+headless="false"
 
 # Arg parser
-while getopts "mn:sg" opt; do
+while getopts "mn:sge" opt; do
   case ${opt} in
     m )
       swarm="true"
@@ -28,6 +30,9 @@ while getopts "mn:sg" opt; do
       ;;
     g )
       use_gnome="true"
+      ;;
+    e )
+      headless="true"
       ;;
     \? )
       echo "Invalid option: -$OPTARG" >&2
@@ -76,14 +81,28 @@ for namespace in ${drone_namespaces[@]}; do
     drone_namespace=${namespace} \
     simulation_config_file=${simulation_config} \
     base_launch=${base_launch} \
+    headless=${headless} \
     ${tmuxinator_end}"
 
   sleep 0.1 # Wait for tmuxinator to finish
 done
 
-# Attach to tmux session
+# Attach to tmux session.
+# Only when there is a terminal to attach to. tmuxinator has already created
+# every drone's session (attach: false in aerostack2.yaml), so attaching is
+# purely a convenience for an interactive operator. Run non-interactively --
+# nohup, CI, a scripted launch -- and this fails with
+# "open terminal failed: not a terminal" and returns 1, which cascades into
+# run_simulation.sh's cleanup trap and tears the whole simulation back down.
+# Confirmed live: sim.log contained that single line, gz sim was not running,
+# and no drone had come up, while the launcher still printed "simulation is up".
 if [[ ${use_gnome} == "false" ]]; then
-  tmux attach-session -t ${drone_namespaces[0]}
+  if [[ -t 0 && -t 1 ]]; then
+    tmux attach-session -t ${drone_namespaces[0]}
+  else
+    echo "Not a terminal; leaving tmux sessions detached." \
+         "Attach with: tmux attach -t ${drone_namespaces[0]}"
+  fi
 # If tmp_file exists, remove it
 elif [[ -f ${tmp_file} ]]; then
   rm ${tmp_file}

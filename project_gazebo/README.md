@@ -28,65 +28,22 @@ The flags for the components launcher are:
 - **-s**: if set, the simulation will not be launched. Default launch simulation
 - **-g**: launch using gnome-terminal instead of tmux. Default not set
 
-### 2. Launch aerostack2 nodes for the ground station
-To launch aerostack2 nodes for the ground station, execute once the following command:
+### 2. Launch a mission
+
+NIDAR RescueSwarm's actual entry point is the single top-level launcher, not the
+per-mission demo scripts this template originally shipped with (removed — superseded
+entirely by the GCS-driven flow below):
 
 ```bash
-./launch_ground_station.bash
+./scripts/run_simulation.sh
 ```
 
-The flags for the components launcher are:
+This brings up Gazebo + AS2 for every drone in `config/world_swarm.yaml`, rosbridge,
+the `nidar_gcs_bridge`/`nidar_mission_executor`/`nidar_survivor_manager` ROS 2 nodes
+(see `DOCUMENTS/standard_implementation_plan_ros2_framework.md`), and the GCS dev
+server. Missions are loaded and started from the GCS web UI, not from the CLI.
 
-- **-m**: multi agent. Default not set
-- **-t**: launch keyboard teleoperation. Default not launch
-- **-v**: open rviz. Default not launch
-- **-r**: record rosbag. Default not launch
-- **-n**: drone namespaces, comma separated. Default get from world description config file
-- **-g**: launch using gnome-terminal instead of tmux. Default not set
-
-### 3. Launch a mission
-There are several missions that can be executed:
-
-- **AS2 keyboard teleoperation control**: You can use the keyboard teleoperation launched with the ground station, using the flag `-t`:
-  ```bash
-  ./launch_ground_station.bash -t
-  ```
-  You can launch a **swarm of drones** with the flag `-m` and control them with the keyboard teleoperation, as:
-  ```bash
-  ./launch_as2.bash -m
-  ```
-  ```bash
-  ./launch_ground_station.bash -m -t
-  ```
-- **AS2 Python API single drone mission**: You can execute a mission that used AS2 Python API, launching the mission with:
-  ```bash
-  python3 mission.py
-  ```
-- **AS2 Python API single drone mission using GPS**: You can execute a mission that used AS2 Python API with GPS, launching the mission with:
-  ```bash
-  python3 mission_gps.py
-  ```
-- **AS2 Python API swarm of drones mission**: You can execute a mission with a swarm of drones that used AS2 Python API, launching the mission with:
-  ```bash
-  python3 mission_swarm.py
-  ```
-  You must launch a **swarm of drones** with the flag `-m`, as:
-  ```bash
-  ./launch_as2.bash -m
-  ```
-  ```bash
-  ./launch_ground_station.bash -m
-  ```
-- **AS2 Mission Interpreter single drone mission**: You can execute a mission that used AS2 Mission Interpreter, launching the mission with:
-  ```bash
-  python3 mission_interpreter.py
-  ```
-- **AS2 Behavior Trees single drone mission**: You can execute a mission that used AS2 Behavior Trees, launching the mission with:
-  ```bash
-  python3 mission_behavior_tree.py
-  ```
-
-### 4. End the execution
+### 3. End the execution
 
 If you are using tmux, you can end the execution with the following command:
 
@@ -108,12 +65,9 @@ All projects in aerostack2 are structured in the same way. The project is divide
 
 - **tmuxinator**: Contains the tmuxinator launch file, which is used to launch all aerostack2 nodes.
   - **aerostack2.yaml**: Tmuxinator launch file for each drone. The list of nodes to be launched is defined here.
-  - **ground_station.yaml**: Tmuxinator launch file for the ground station. The list of nodes to be launched is defined here.
 - **config**: Contains the configuration files for the launchers of the nodes in the drones.
 - **config_ground_station**: Contains the configuration files for the launchers of the nodes in the ground station.
-- **launch_as2.bash**: Script to launch nodes defined in *tmuxinator/aerostack2.yaml*.
-- **launch_ground_station.bash**: Script to launch nodes defined in *tmuxinator/ground_station.yaml*.
-- **mission_\*.py**: Differents python mission files that can be executed.
+- **launch_as2.bash**: Script to launch nodes defined in *tmuxinator/aerostack2.yaml* (called by `scripts/run_simulation.sh`, not run directly).
 - **stop_tmuxinator_as2.bash**: Script to stop all nodes launched by *launch_as2.bash*.
 - **stop_tmuxinator_ground_station.bash**: Script to stop all nodes launched by *launch_ground_station.bash*.
 - **stop_tmuxinator.bash**: Script to stop all nodes launched by *launch_as2.bash* and *launch_ground_station.bash*.

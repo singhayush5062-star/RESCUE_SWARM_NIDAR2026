@@ -119,7 +119,21 @@ This is where the system starts earning the **Multi-Drone Collaboration** (50 pt
 
 ---
 
-## Phase 2 — Detection Pipeline (Weeks 3–5)
+## Phase 2 — Detection Pipeline (Weeks 3–5) — ⚙️ PIPELINE COMPLETE (2026-08-27)
+
+**Status:** the full camera → inference → `DetectionResult` → GCS path is built,
+wired, and verified live (102 detections on `/gcs/detections`, boxes centred on a
+survivor and scaling correctly with altitude). Running on stock YOLO26 weights as a
+placeholder; retrained overhead-person weights drop in by copying one file
+(`project_gazebo/models/detection/nidar_person.pt`). §2.1 model training is being
+handled separately. Full write-up, measurements, and deviations:
+**`DOCUMENTS/Phase2_Detection_Notes.md`**.
+
+Two blockers had to be fixed first, both recorded in that document: the camera was
+mounted looking at the horizon rather than nadir, and stock COCO weights score a
+top-down person at 0.03–0.12 confidence even when the figure fills the frame (a
+viewpoint gap, not a resolution one — which is what makes §2.1 a hard prerequisite
+for accuracy rather than later polish).
 
 **Goal:** Build the `nidar_detection` node that runs YOLO inference on the camera stream and publishes `DetectionResult` messages. This is the highest-scoring capability (250 pts for detection + geotagging).
 

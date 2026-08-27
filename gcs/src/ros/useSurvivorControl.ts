@@ -48,6 +48,7 @@ export function useSurvivorControl() {
         ros,
         name: '/gcs/survivor_control/status',
         messageType: 'std_msgs/msg/String',
+        queue_length: 1,
       });
       statusTopic.subscribe((msg) => {
         try {
@@ -61,6 +62,7 @@ export function useSurvivorControl() {
         ros,
         name: '/gcs/survivors/list',
         messageType: 'std_msgs/msg/String',
+        queue_length: 1,
       });
       listTopic.subscribe((msg) => {
         try {

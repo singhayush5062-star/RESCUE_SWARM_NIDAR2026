@@ -3,19 +3,48 @@ origin:
     latitude: 28.682412
     longitude: 77.499734
     altitude: 100.0
+# world_bridges: set_entity_pose exposes /world/<world_name>/set_pose
+# (ros_gz_interfaces/srv/SetEntityPose), used by nidar_mission_executor to
+# teleport a drone to a GCS-configured launch position before arming --
+# without a sim restart -- when a mission specifies drone_launch_positions.
+world_bridges:
+  - set_entity_pose
 drones:
+  # Default spawn offsets: corners of a 3.2m square (fits inside the 12ft
+  # (3.6576m) launch/landing box every drone must launch from and land
+  # within). The previous defaults (-2,0)/(2,0) were 4.0m apart -- already
+  # outside that box before any GCS-configured launch site is ever set.
   - model_type: "px4vision"
     model_name: "drone0"
     flight_time: 60
     xyz:
-      - -2.0
-      - 0.0
+      - -1.6
+      - -1.6
       - 0.2
     payload:
       - model_type: "gps"
         model_name: "gps"
       - model_type: "gimbal_speed"
         model_name: "gimbal"
+        # Nadir (straight down). A camera looks along its +X axis by SDF
+        # convention, so a +90 deg pitch about Y aims it at the ground --
+        # the standard survey-mapping mount, and the geometry the rest of
+        # this project already assumes: path_planner's ground_footprint_m
+        # derives the swath from a footprint directly beneath the drone,
+        # and Phase 3's geotag projection intersects the camera ray with
+        # the ground plane. Left at the default 0 the camera stares at the
+        # horizon and sees sky, however well the lawnmower flies.
+        #
+        # Set on the GIMBAL, not on the hd_camera payload inside it: AS2's
+        # gimbal templates apply the gimbal's own pose to the gimbaled
+        # sensor and ignore the sensor's (their own FIXME, in
+        # speed_gimbal.sdf.jinja line 88). An rpy on the camera entry is
+        # silently discarded -- confirmed live, the rendered frame did not
+        # change at all.
+        rpy:
+          - 0.0
+          - 1.5707963
+          - 0.0
         payload:
           model_type: "hd_camera"
           model_name: "camera"
@@ -23,14 +52,33 @@ drones:
     model_name: "drone1"
     flight_time: 60
     xyz:
-      - 2.0
-      - 0.0
+      - 1.6
+      - -1.6
       - 0.2
     payload:
       - model_type: "gps"
         model_name: "gps"
       - model_type: "gimbal_speed"
         model_name: "gimbal"
+        # Nadir (straight down). A camera looks along its +X axis by SDF
+        # convention, so a +90 deg pitch about Y aims it at the ground --
+        # the standard survey-mapping mount, and the geometry the rest of
+        # this project already assumes: path_planner's ground_footprint_m
+        # derives the swath from a footprint directly beneath the drone,
+        # and Phase 3's geotag projection intersects the camera ray with
+        # the ground plane. Left at the default 0 the camera stares at the
+        # horizon and sees sky, however well the lawnmower flies.
+        #
+        # Set on the GIMBAL, not on the hd_camera payload inside it: AS2's
+        # gimbal templates apply the gimbal's own pose to the gimbaled
+        # sensor and ignore the sensor's (their own FIXME, in
+        # speed_gimbal.sdf.jinja line 88). An rpy on the camera entry is
+        # silently discarded -- confirmed live, the rendered frame did not
+        # change at all.
+        rpy:
+          - 0.0
+          - 1.5707963
+          - 0.0
         payload:
           model_type: "hd_camera"
           model_name: "camera"
@@ -38,14 +86,33 @@ drones:
     model_name: "drone2"
     flight_time: 60
     xyz:
-      - 0.0
-      - 0.0
+      - -1.6
+      - 1.6
       - 0.2
     payload:
       - model_type: "gps"
         model_name: "gps"
       - model_type: "gimbal_speed"
         model_name: "gimbal"
+        # Nadir (straight down). A camera looks along its +X axis by SDF
+        # convention, so a +90 deg pitch about Y aims it at the ground --
+        # the standard survey-mapping mount, and the geometry the rest of
+        # this project already assumes: path_planner's ground_footprint_m
+        # derives the swath from a footprint directly beneath the drone,
+        # and Phase 3's geotag projection intersects the camera ray with
+        # the ground plane. Left at the default 0 the camera stares at the
+        # horizon and sees sky, however well the lawnmower flies.
+        #
+        # Set on the GIMBAL, not on the hd_camera payload inside it: AS2's
+        # gimbal templates apply the gimbal's own pose to the gimbaled
+        # sensor and ignore the sensor's (their own FIXME, in
+        # speed_gimbal.sdf.jinja line 88). An rpy on the camera entry is
+        # silently discarded -- confirmed live, the rendered frame did not
+        # change at all.
+        rpy:
+          - 0.0
+          - 1.5707963
+          - 0.0
         payload:
           model_type: "hd_camera"
           model_name: "camera"
@@ -53,14 +120,33 @@ drones:
     model_name: "drone3"
     flight_time: 60
     xyz:
-      - 0.0
-      - 2.0
+      - 1.6
+      - 1.6
       - 0.2
     payload:
       - model_type: "gps"
         model_name: "gps"
       - model_type: "gimbal_speed"
         model_name: "gimbal"
+        # Nadir (straight down). A camera looks along its +X axis by SDF
+        # convention, so a +90 deg pitch about Y aims it at the ground --
+        # the standard survey-mapping mount, and the geometry the rest of
+        # this project already assumes: path_planner's ground_footprint_m
+        # derives the swath from a footprint directly beneath the drone,
+        # and Phase 3's geotag projection intersects the camera ray with
+        # the ground plane. Left at the default 0 the camera stares at the
+        # horizon and sees sky, however well the lawnmower flies.
+        #
+        # Set on the GIMBAL, not on the hd_camera payload inside it: AS2's
+        # gimbal templates apply the gimbal's own pose to the gimbaled
+        # sensor and ignore the sensor's (their own FIXME, in
+        # speed_gimbal.sdf.jinja line 88). An rpy on the camera entry is
+        # silently discarded -- confirmed live, the rendered frame did not
+        # change at all.
+        rpy:
+          - 0.0
+          - 1.5707963
+          - 0.0
         payload:
           model_type: "hd_camera"
           model_name: "camera"
@@ -69,14 +155,58 @@ drones:
 objects:
   - model_type: "survivor_actor"
     model_name: "survivor_0"
-    xyz: [8.0, 10.0, 0.0]
-    rpy: [0.0, 0.0, 0.4]
+    xyz: [0.66, -9.07, 0.0]
+    rpy: [0.0, 0.0, 1.654]
   - model_type: "survivor_actor"
     model_name: "survivor_1"
-    xyz: [-10.0, 6.0, 0.0]
-    rpy: [0.0, 0.0, 1.2]
+    xyz: [3.15, -2.43, 0.0]
+    rpy: [0.0, 0.0, -2.339]
   - model_type: "survivor_actor"
     model_name: "survivor_2"
-    xyz: [-6.0, -9.0, 0.0]
-    rpy: [0.0, 0.0, 2.1]
+    xyz: [0.2, -3.12, 0.0]
+    rpy: [0.0, 0.0, -0.961]
+  - model_type: "survivor_actor"
+    model_name: "survivor_3"
+    xyz: [-2.44, 3.43, 0.0]
+    rpy: [0.0, 0.0, 2.543]
+  - model_type: "survivor_actor"
+    model_name: "survivor_4"
+    xyz: [-8.23, -8.49, 0.0]
+    rpy: [0.0, 0.0, -2.535]
+  - model_type: "survivor_actor"
+    model_name: "survivor_5"
+    xyz: [4.35, -11.51, 0.0]
+    rpy: [0.0, 0.0, 2.214]
+  - model_type: "survivor_actor"
+    model_name: "survivor_6"
+    xyz: [-11.81, 9.47, 0.0]
+    rpy: [0.0, 0.0, 3.077]
+  - model_type: "survivor_actor"
+    model_name: "survivor_7"
+    xyz: [-8.08, 4.95, 0.0]
+    rpy: [0.0, 0.0, -0.239]
+  - model_type: "survivor_actor"
+    model_name: "survivor_8"
+    xyz: [7.07, 10.12, 0.0]
+    rpy: [0.0, 0.0, -1.685]
+  - model_type: "survivor_actor"
+    model_name: "survivor_9"
+    xyz: [3.77, 8.02, 0.0]
+    rpy: [0.0, 0.0, 1.269]
+  - model_type: "survivor_actor"
+    model_name: "survivor_10"
+    xyz: [-11.87, -5.17, 0.0]
+    rpy: [0.0, 0.0, 2.318]
+  - model_type: "survivor_actor"
+    model_name: "survivor_11"
+    xyz: [-8.7, -12.75, 0.0]
+    rpy: [0.0, 0.0, -2.802]
+  - model_type: "survivor_actor"
+    model_name: "survivor_12"
+    xyz: [-4.37, -1.66, 0.0]
+    rpy: [0.0, 0.0, -0.458]
+  - model_type: "survivor_actor"
+    model_name: "survivor_13"
+    xyz: [9.18, 2.0, 0.0]
+    rpy: [0.0, 0.0, 1.853]
 # --- END AUTO-GENERATED SURVIVORS ---

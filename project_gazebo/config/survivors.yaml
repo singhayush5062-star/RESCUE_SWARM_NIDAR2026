@@ -29,49 +29,85 @@
 survivors:
   - name: survivor_0
     model_type: survivor_actor
-    x: 8.0
-    y: 10.0
+    x: 0.66
+    y: -9.07
     z: 0.0
-    yaw: 0.4
+    yaw: 1.654
   - name: survivor_1
     model_type: survivor_actor
-    x: -10.0
-    y: 6.0
+    x: 3.15
+    y: -2.43
     z: 0.0
-    yaw: 1.2
+    yaw: -2.339
   - name: survivor_2
     model_type: survivor_actor
-    x: -6.0
-    y: -9.0
+    x: 0.20
+    y: -3.12
     z: 0.0
-    yaw: 2.1
-  # - name: survivor_3
-  #   model_type: survivor
-  #   x: 11.0
-  #   y: -7.0
-  #   z: 0.0
-  #   yaw: 0.0
-  # - name: survivor_4
-  #   model_type: survivor
-  #   x: 13.0
-  #   y: 1.0
-  #   z: 0.0
-  #   yaw: 2.8
-  # - name: survivor_5
-  #   model_type: survivor
-  #   x: -13.0
-  #   y: -2.0
-  #   z: 0.0
-  #   yaw: 0.9
-  # - name: survivor_6
-  #   model_type: survivor
-  #   x: 2.0
-  #   y: -13.0
-  #   z: 0.0
-  #   yaw: 1.6
-  # - name: survivor_7
-  #   model_type: survivor
-  #   x: -3.0
-  #   y: 14.0
-  #   z: 0.0
-  #   yaw: 0.3
+    yaw: -0.961
+  - name: survivor_3
+    model_type: survivor_actor
+    x: -2.44
+    y: 3.43
+    z: 0.0
+    yaw: 2.543
+  - name: survivor_4
+    model_type: survivor_actor
+    x: -8.23
+    y: -8.49
+    z: 0.0
+    yaw: -2.535
+  - name: survivor_5
+    model_type: survivor_actor
+    x: 4.35
+    y: -11.51
+    z: 0.0
+    yaw: 2.214
+  - name: survivor_6
+    model_type: survivor_actor
+    x: -11.81
+    y: 9.47
+    z: 0.0
+    yaw: 3.077
+  - name: survivor_7
+    model_type: survivor_actor
+    x: -8.08
+    y: 4.95
+    z: 0.0
+    yaw: -0.239
+  - name: survivor_8
+    model_type: survivor_actor
+    x: 7.07
+    y: 10.12
+    z: 0.0
+    yaw: -1.685
+  - name: survivor_9
+    model_type: survivor_actor
+    x: 3.77
+    y: 8.02
+    z: 0.0
+    yaw: 1.269
+  - name: survivor_10
+    model_type: survivor_actor
+    x: -11.87
+    y: -5.17
+    z: 0.0
+    yaw: 2.318
+  - name: survivor_11
+    model_type: survivor_actor
+    x: -8.70
+    y: -12.75
+    z: 0.0
+    yaw: -2.802
+  - name: survivor_12
+    model_type: survivor_actor
+    x: -4.37
+    y: -1.66
+    z: 0.0
+    yaw: -0.458
+  - name: survivor_13
+    model_type: survivor_actor
+    x: 9.18
+    y: 2.00
+    z: 0.0
+    yaw: 1.853

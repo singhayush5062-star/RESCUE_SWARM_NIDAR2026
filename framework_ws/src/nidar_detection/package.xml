@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nidar_detection</name>
+  <version>0.1.0</version>
+  <description>Per-drone person detection for NIDAR RescueSwarm: runs a YOLO detector over one drone's camera stream and publishes nidar_msgs/DetectionResult. Detection only -- projecting a bbox to lat/lon belongs to the Phase 3 geotag node.</description>
+  <maintainer email="singhayush5062@gmail.com">ayush</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>nidar_msgs</depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <!-- ultralytics (and the torch build it pulls in) is not packaged for
+       rosdep; it is installed by scripts/setup_nidar_ros.sh, which also
+       pins numpy<2 because cv_bridge's compiled extension breaks against
+       numpy 2.x.
+       `lap` is a hard requirement of ByteTrack (it solves the detection-to-
+       track assignment). It must be installed explicitly: ultralytics
+       otherwise tries to auto-install it at the first track() call, into a
+       root-owned dist-packages directory, which fails with EACCES and
+       surfaces only as "inference failed: No module named 'lap'" on every
+       single frame -- confirmed live across all four detection nodes. -->
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

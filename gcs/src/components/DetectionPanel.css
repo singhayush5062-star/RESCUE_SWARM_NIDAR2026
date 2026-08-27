@@ -1,0 +1,126 @@
+.detection-panel {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #f8fafc;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+.detection-panel__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.detection-panel__header:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.detection-panel__total {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: rgba(34, 197, 94, 0.18);
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  color: #86efac;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.detection-panel__chevron {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.detection-panel__body {
+  padding: 4px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detection-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.detection-panel__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #475569;
+  flex: 0 0 auto;
+}
+
+.detection-panel__dot--active {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
+}
+
+.detection-panel__name {
+  font-weight: 500;
+  min-width: 52px;
+}
+
+.detection-panel__count {
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+}
+
+.detection-panel__conf {
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+  flex: 1;
+}
+
+.detection-panel__feed-btn {
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.detection-panel__feed-btn:hover {
+  background: #334155;
+}
+
+.detection-panel__feed-btn--on {
+  background: #2563eb;
+  border-color: #3b82f6;
+  color: #fff;
+}
+
+.detection-panel__feed {
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0b1220;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.detection-panel__feed img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.detection-panel__no-signal {
+  padding: 22px 0;
+  text-align: center;
+  color: #64748b;
+  font-size: 12px;
+}
