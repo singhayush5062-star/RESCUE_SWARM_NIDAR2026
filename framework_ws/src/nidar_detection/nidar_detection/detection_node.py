@@ -13,17 +13,22 @@ detection only -- turning a pixel bbox into a lat/lon is Phase 3's geotag
 node, which consumes the DetectionResult messages published here.
 """
 
+import json
+import math
 import time
 
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import CompressedImage, Image
+from sensor_msgs.msg import CompressedImage, Image, NavSatFix
+from std_msgs.msg import String
 
-from nidar_msgs.msg import DetectionResult
+from geometry_msgs.msg import PoseStamped
+from nidar_msgs.msg import DetectionResult, ZoneAllocation
 
 from nidar_detection import detector as det
+from nidar_detection import survey_gate
 
 #: Camera topic AS2's gimbal_speed + hd_camera payload pair actually
 #: publishes on. NOT the flat `sensor_measurements/camera` the older
@@ -80,6 +85,23 @@ class DetectionNode(Node):
         # weights, load that instead -- 3x faster for the same output. Set
         # false to force the literal model_path regardless of device.
         self.declare_parameter('prefer_ncnn_on_cpu', True)
+        # Only infer while this drone is actually flying the survey pattern at
+        # survey height -- see nidar_detection/survey_gate.py for the measured
+        # reason (six phantom survivors, four of them on the launch pad).
+        # Left switchable because this node is also run standalone, outside any
+        # mission, for dataset capture and for checking the detector is alive;
+        # with the gate on and no mission running it would correctly do nothing
+        # at all, which is indistinguishable from a broken node.
+        self.declare_parameter('gate_on_survey', True)
+        self.declare_parameter('altitude_tolerance_m',
+                               survey_gate.DEFAULT_ALTITUDE_TOLERANCE_M)
+        # Also require the drone to be INSIDE its allocated zone. Without
+        # this the gate opens the moment the coverage phase starts, while
+        # each drone is still transiting the 8-10 m from the launch box to
+        # its zone -- at scan altitude, in the running state. Measured: the
+        # first survivor record appears 7 s into the phase, and three
+        # phantoms landed within 5 m of the launch box centre because of it.
+        self.declare_parameter('require_in_zone', True)
 
         self.drone_id = self.get_parameter('drone_id').value
         model_path = self.get_parameter('model_path').value
@@ -147,6 +169,33 @@ class DetectionNode(Node):
         # away and this node only wants every Nth frame anyway.
         self.create_subscription(Image, camera_topic, self._on_image, qos_profile_sensor_data)
 
+        # --- survey gate inputs -------------------------------------------
+        self._gate_on_survey = bool(self.get_parameter('gate_on_survey').value)
+        self._altitude_tolerance = float(self.get_parameter('altitude_tolerance_m').value)
+        self._mission_state = None
+        self._scan_altitude = None
+        self._altitude = None
+        self._gate_open = None      # None so the first decision always logs
+        self._frames_gated = 0
+        self._require_in_zone = bool(self.get_parameter('require_in_zone').value)
+        self._zone = []             # this drone's allocated zone, [(lat, lon), ...]
+        self._fix = None            # this drone's own (lat, lon)
+
+        if self._gate_on_survey:
+            self.create_subscription(String, '/nidar/mission_status',
+                                     self._on_mission_status, 10)
+            # BEST_EFFORT to match the state estimator's publisher, the same
+            # trap already documented for the camera subscription above.
+            self.create_subscription(PoseStamped,
+                                     f'/{self.drone_id}/self_localization/pose',
+                                     self._on_pose, qos_profile_sensor_data)
+            if self._require_in_zone:
+                self.create_subscription(ZoneAllocation, '/nidar/zone_allocation',
+                                         self._on_zone, 10)
+                self.create_subscription(NavSatFix,
+                                         f'/{self.drone_id}/sensor_measurements/gps',
+                                         self._on_fix, qos_profile_sensor_data)
+
         # Periodic heartbeat so a run that detects nothing can be told apart
         # from a run where no frames ever arrived -- the difference between
         # "the model missed them" and "the camera topic is wrong", which is
@@ -184,8 +233,67 @@ class DetectionNode(Node):
 
     # ------------------------------------------------------------------
 
+    def _on_mission_status(self, msg: String):
+        try:
+            payload = json.loads(msg.data)
+        except (ValueError, TypeError):
+            return
+        self._mission_state = payload.get('state')
+        # Only read on a status that carries it: the executor publishes the
+        # height with 'running', and clobbering it with None on the next
+        # 'returning' would close the gate for the wrong reason.
+        if payload.get('scan_altitude_m') is not None:
+            self._scan_altitude = float(payload['scan_altitude_m'])
+
+    def _on_pose(self, msg: PoseStamped):
+        self._altitude = msg.pose.position.z
+
+    def _on_zone(self, msg: ZoneAllocation):
+        # One topic carries every drone's zone; keep only this drone's.
+        if msg.drone_id != self.drone_id:
+            return
+        self._zone = [(p.latitude, p.longitude) for p in msg.zone_vertices]
+
+    def _on_fix(self, msg: NavSatFix):
+        if math.isfinite(msg.latitude) and math.isfinite(msg.longitude):
+            self._fix = (msg.latitude, msg.longitude)
+
+    def _survey_gate_open(self) -> bool:
+        """Whether to infer on this frame, logging every transition.
+
+        The transition log matters more than it looks: a silently-closed gate
+        and a dead detector produce exactly the same symptom -- no detections
+        and a blank feed -- and this is the line that tells them apart."""
+        if not self._gate_on_survey:
+            return True
+        is_open = survey_gate.is_surveying(
+            self._mission_state, self._altitude, self._scan_altitude,
+            self._altitude_tolerance)
+        if is_open and self._require_in_zone:
+            is_open = bool(self._fix) and survey_gate.point_in_polygon(
+                self._fix[0], self._fix[1], self._zone)
+        if is_open != self._gate_open:
+            self._gate_open = is_open
+            if is_open:
+                self.get_logger().info(
+                    f'[gate] OPEN -- surveying at {self._altitude:.1f}m '
+                    f'(scan {self._scan_altitude:.1f}m +/- {self._altitude_tolerance:g}m)')
+            else:
+                alt = 'unknown' if self._altitude is None else f'{self._altitude:.1f}m'
+                in_zone = ('n/a' if not self._require_in_zone
+                           else bool(self._fix) and survey_gate.point_in_polygon(
+                               self._fix[0], self._fix[1], self._zone))
+                self.get_logger().info(
+                    f'[gate] CLOSED -- state={self._mission_state!r} alt={alt} '
+                    f'in_zone={in_zone}; not inferring')
+        return is_open
+
     def _on_image(self, msg: Image):
         self._frames_seen += 1
+
+        if not self._survey_gate_open():
+            self._frames_gated += 1
+            return
 
         now = time.monotonic()
         if self._min_interval and (now - self._last_inference) < self._min_interval:
@@ -282,6 +390,7 @@ class DetectionNode(Node):
             return
         self.get_logger().info(
             f'[detect] frames seen {self._frames_seen}, inferred {self._frames_processed}, '
+            f'skipped by survey gate {self._frames_gated}, '
             f'detections {self._detections_total}, '
             f'unique people (track ids) {len(self._track_ids)}')
 

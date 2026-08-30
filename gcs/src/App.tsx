@@ -70,7 +70,7 @@ function App() {
 
   const { status, loadedMission, loadMission, startMission, updateMission } = useMissionControl();
   const missionProgress = useMissionProgress();
-  const detections = useDetections(DRONE_NAMESPACES, DRONE_NAMESPACES);
+  const detections = useDetections(DRONE_NAMESPACES, DRONE_NAMESPACES, loadedMission);
   const zones = useZoneAllocation(loadedMission);
   const plannedPaths = useMissionPlannedPaths(loadedMission);
   const droneControl = useDroneControl();
@@ -440,7 +440,7 @@ function App() {
         }}
         rosState={rosbridgeState}
         missionStatusState={currentStatusState}
-        detectedCount={detections.total}
+        detectedCount={detectedSurvivors.length}
         placedSurvivorCount={Object.keys(survivorControl.survivors).length}
         onStartMission={handleStartMissionClick}
       />
@@ -462,8 +462,8 @@ function App() {
               <DetectionPanel
                 droneNamespaces={DRONE_NAMESPACES}
                 byDrone={detections.byDrone}
-                total={detections.total}
-                observations={detections.observations}
+                survivorsFound={detectedSurvivors.length}
+                trackCount={detections.trackCount}
               />
               <DroneStatusPanel
                 drones={effectiveDrones}
@@ -612,7 +612,8 @@ function App() {
               droneNamespaces={DRONE_NAMESPACES}
               frames={detections.frames}
               byDrone={detections.byDrone}
-              total={detections.total}
+              survivorsFound={detectedSurvivors.length}
+              trackCount={detections.trackCount}
               observations={detections.observations}
               executionMode={executionMode}
               drones={effectiveDrones}
@@ -646,10 +647,12 @@ function App() {
         // whatever the tab had been open for.
         durationSeconds={missionProgress?.elapsed_time_sec ?? missionDuration}
         areaM2={loadedMission?.boundary ? calculatePolygonAreaM2(loadedMission.boundary) : 0}
-        // People actually found (distinct ByteTrack ids), not survivors the
-        // operator placed in the sim. The `|| 2` fallback that used to be here
-        // meant an empty mission still reported two rescues.
-        survivorsCount={detections.total}
+        // People actually found, reconciled across the swarm by the geotag
+        // aggregator -- NOT summed ByteTrack ids, which counted one survivor
+        // once per drone that saw them and put 41 in this report for an arena
+        // holding 20. The `|| 2` fallback that used to be here meant an empty
+        // mission still reported two rescues.
+        survivorsCount={detectedSurvivors.length}
         droneCount={DRONE_NAMESPACES.length}
         outcome={missionOutcome}
       />

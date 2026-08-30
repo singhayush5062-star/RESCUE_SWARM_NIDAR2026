@@ -34,6 +34,20 @@ def load_world_name(path) -> str:
     return cfg['world_name']
 
 
+def load_world_objects(path) -> list[dict]:
+    """Return the config's 'objects' entries (the non-drone models Gazebo
+    spawns at launch), or [] if there are none.
+
+    Each entry is the raw dict from the config: 'model_type', 'model_name',
+    'xyz' (local ENU metres relative to the config's origin), and optionally
+    'rpy'. project_gazebo/utils/sync_survivors.py regenerates this block from
+    survivors.yaml, so this file -- not survivors.yaml -- is what actually
+    describes the models present in the running world.
+    """
+    cfg = _read_config(path)
+    return list(cfg.get('objects') or [])
+
+
 def get_drones_namespaces(path) -> list[str]:
     """Return drone namespaces listed in the config file (JSON or YAML).
 

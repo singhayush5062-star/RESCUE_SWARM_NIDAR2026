@@ -8,7 +8,10 @@ interface VideoPanelProps {
   droneNamespaces: string[];
   frames: Record<string, string>;
   byDrone: Record<string, DroneDetectionState>;
-  total: number;
+  /** People, reconciled across the swarm by the geotag aggregator. */
+  survivorsFound: number;
+  /** Raw per-drone ByteTrack ids summed -- detector activity, not people. */
+  trackCount: number;
   observations: number;
   executionMode?: ExecutionMode;
   /** Live telemetry, so the HUD shows this drone's real altitude and
@@ -20,7 +23,8 @@ export function VideoPanel({
   droneNamespaces,
   frames,
   byDrone,
-  total,
+  survivorsFound,
+  trackCount,
   observations,
   executionMode = 'SIMULATION',
   drones = [],
@@ -48,7 +52,11 @@ export function VideoPanel({
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div className="obsidian-badge badge-warning" style={{ fontSize: 11 }}>
-            {total} PERSONS TRACKED ({observations} DETECTIONS)
+            {/* "PERSONS TRACKED" applied to summed ByteTrack ids was the
+                same overcount as the panel badges: one person seen by three
+                drones is three tracks. People come from the aggregator; the
+                track and frame counts stay, labelled as what they are. */}
+            {survivorsFound} FOUND &middot; {trackCount} TRACKS ({observations} DETECTIONS)
           </div>
 
           {anyRealFeed ? (

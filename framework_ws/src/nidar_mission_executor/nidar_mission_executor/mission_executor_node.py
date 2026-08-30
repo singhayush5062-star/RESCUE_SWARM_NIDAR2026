@@ -991,7 +991,9 @@ class MissionExecutor(Node):
                         continue
                     lat, lon = wps[i]
                     drone.go_to.go_to_gps_point([lat, lon, drone_altitudes.get(ns, altitude)], speed=speed)
-                self._publish_status('running', f'waypoint {i + 1}/{max_len}', {'waypoint_index': i})
+                self._publish_status('running', f'waypoint {i + 1}/{max_len}',
+                                     {'waypoint_index': i,
+                                      'scan_altitude_m': altitude})
 
             self._publish_status('returning', 'returning to launch site')
             self._return_to_launch(interfaces, self._launch_local, altitude, speed)
@@ -1107,7 +1109,20 @@ class MissionExecutor(Node):
                     self._publish_status('error', f'{ns} takeoff failed')
                     return
 
-            self._publish_status('running', 'flying coverage pattern', {'drones': namespaces})
+            self._publish_status('running', 'flying coverage pattern',
+                                 {'drones': namespaces,
+                                  # Consumed by nidar_detection's survey gate: the
+                                  # detector only runs while a drone is actually at
+                                  # survey height, and this is where that height is
+                                  # known.
+                                  'scan_altitude_m': scan_altitude,
+                                  # Consumed by nidar_geotag: a projected
+                                  # ground point outside the mapping area is
+                                  # not a survivor in the search area, and one
+                                  # such record landed 4.5 m beyond the
+                                  # boundary on a measured run.
+                                  'boundary': [[float(a), float(b)] for a, b in
+                                               [(v[0], v[1]) for v in boundary]]})
             # follow_path() defaults to wait=True (blocks until that drone's
             # WHOLE path completes). Calling it in a plain sequential loop
             # here would fly zones one drone at a time -- one thread per

@@ -19,6 +19,7 @@ person still publish two tags, with unrelated ids, because a single drone
 cannot know that. survivor_aggregator_node merges them.
 """
 
+import json
 import math
 from pathlib import Path
 from typing import Optional
@@ -29,11 +30,14 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 import tf2_ros
 from sensor_msgs.msg import CameraInfo
+from std_msgs.msg import String
 
 from nidar_msgs.msg import DetectionResult, SurvivorTag
 from nidar_mission_manager import geo_utils, world_config
 from nidar_mission_manager.survivor_aggregator import (
     DEFAULT_LOCAL_DEDUP_RADIUS_M, SurvivorRegistry)
+
+from nidar_detection import survey_gate
 
 from nidar_geotag import projection
 
@@ -64,6 +68,12 @@ class GeotagNode(Node):
         # at survey altitude is ~9 m across, so anything beyond a few tens of
         # metres from the drone did not come from this frame.
         self.declare_parameter('max_ground_range_m', 60.0)
+        # Reject a projected ground point that falls outside the mapping area.
+        # A survivor outside the search area is out of scope by definition,
+        # and one measured record landed 4.5 m beyond the boundary. The margin
+        # keeps a real survivor standing just inside the line from being
+        # rejected by this system's own 0.40 m mean position error.
+        self.declare_parameter('boundary_margin_m', 2.0)
 
         self.drone_id = str(self.get_parameter('drone_id').value)
         self.earth_frame = str(self.get_parameter('earth_frame').value)
@@ -77,6 +87,8 @@ class GeotagNode(Node):
             dedup_radius_m=float(self.get_parameter('local_dedup_radius_m').value))
 
         self._intrinsics: Optional[tuple] = None   # (fx, fy, cx, cy)
+        self._boundary: list = []                 # mapping area, [(lat, lon), ...]
+        self.boundary_margin = float(self.get_parameter('boundary_margin_m').value)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
@@ -93,13 +105,15 @@ class GeotagNode(Node):
         self.create_subscription(DetectionResult,
                                  f'/{self.drone_id}/detection/results',
                                  self._on_detection, 10)
+        self.create_subscription(String, '/nidar/mission_status',
+                                 self._on_mission_status, 10)
 
         # Counters, reported in the periodic summary below. Without these the
         # only visible symptom of a systematically-failing projection is an
         # empty map, which looks identical to "no survivors present".
         self._stats = {'seen': 0, 'low_conf': 0, 'no_tf': 0,
                        'no_intrinsics': 0, 'no_ground_hit': 0,
-                       'out_of_range': 0, 'published': 0}
+                       'out_of_range': 0, 'outside_area': 0, 'published': 0}
         self.create_timer(10.0, self._log_stats)
 
         self.get_logger().info(
@@ -108,6 +122,18 @@ class GeotagNode(Node):
             f'| dedup={self.registry.dedup_radius_m:.1f}m | origin={self.origin}')
 
     # ------------------------------------------------------------------
+
+    def _on_mission_status(self, msg: String):
+        try:
+            payload = json.loads(msg.data)
+        except (ValueError, TypeError):
+            return
+        # Only on a status that carries it -- the boundary rides with
+        # 'running'; clearing it on the next 'returning' would drop the
+        # filter for the rest of the mission.
+        b = payload.get('boundary')
+        if b:
+            self._boundary = [(float(v[0]), float(v[1])) for v in b if len(v) >= 2]
 
     def _on_camera_info(self, msg: CameraInfo):
         # k = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
@@ -172,6 +198,11 @@ class GeotagNode(Node):
 
         lat, lon = geo_utils.enu_to_latlon([(hit[0], hit[1])], *self.origin)[0]
 
+        if not survey_gate.is_inside_area(lat, lon, self._boundary,
+                                          self.boundary_margin):
+            self._stats['outside_area'] += 1
+            return
+
         # A ByteTrack id is per-drone but stable, so it is a definitive merge
         # key within this node. Untracked detections fall back to the radius.
         key = (f'{self.drone_id}:{msg.track_id}'
@@ -207,7 +238,8 @@ class GeotagNode(Node):
             f"geotag: {s['seen']} detections -> {s['published']} tags, "
             f"{len(self.registry)} unique | dropped: low_conf={s['low_conf']} "
             f"no_tf={s['no_tf']} no_intrinsics={s['no_intrinsics']} "
-            f"no_ground={s['no_ground_hit']} out_of_range={s['out_of_range']}")
+            f"no_ground={s['no_ground_hit']} out_of_range={s['out_of_range']} "
+            f"outside_area={s['outside_area']}")
 
 
 def main():

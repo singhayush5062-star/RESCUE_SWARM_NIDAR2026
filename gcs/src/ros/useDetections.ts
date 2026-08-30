@@ -65,13 +65,28 @@ const FEED_THROTTLE_MS = 100;
  * costs the backend nothing at all, which is what lets the panel default to
  * showing one feed rather than four.
  */
-export function useDetections(droneNamespaces: string[], feedNamespaces: string[] = []) {
+export function useDetections(
+  droneNamespaces: string[],
+  feedNamespaces: string[] = [],
+  resetKey?: unknown,
+) {
   const [byDrone, setByDrone] = useState<Record<string, DroneDetectionState>>({});
   const [frames, setFrames] = useState<Record<string, string>>({});
   const feedKey = feedNamespaces.join(',');
   const namespaceKey = droneNamespaces.join(',');
   const framesRef = useRef(frames);
   framesRef.current = frames;
+
+  // Clear accumulated tracker state on a new mission, the same way
+  // useZoneAllocation clears its zones. Without this the sets below only ever
+  // grow: a browser tab left open across three trials still holds trial one's
+  // ByteTrack ids, so every count is the sum of every run since the last
+  // manual refresh. Ids are also not comparable across runs -- the detector
+  // restarts numbering -- so carrying them forward is meaningless as well as
+  // inflating.
+  useEffect(() => {
+    setByDrone({});
+  }, [resetKey]);
 
   // Detection results — one subscription for the whole swarm, fanned in by
   // nidar_gcs_bridge.
@@ -149,11 +164,20 @@ export function useDetections(droneNamespaces: string[], feedNamespaces: string[
     };
   }, [feedKey]);
 
-  // People found, not messages received. Summed per drone because track ids
-  // are only unique within one drone -- two drones seeing the same survivor
-  // produce two unrelated ids, and reconciling those needs the geographic
-  // positions Phase 3's aggregator will provide.
-  const total = Object.values(byDrone).reduce((sum, d) => sum + d.trackIds.size, 0);
+  // TRACKS, not people -- and deliberately not named `total` any more.
+  //
+  // Track ids are unique only within one drone's own stream, so summing them
+  // counts one survivor once per drone that saw them, plus once more every
+  // time a lawnmower pass re-acquires a track it had lost. Measured: 41 for
+  // an arena holding 20 people. This number was previously wired straight
+  // into every "N FOUND" badge and into the exported mission report.
+  //
+  // It is still worth having -- it is the honest measure of detector
+  // activity per drone -- but the count of PEOPLE now comes from
+  // useDetectedSurvivors, which reconciles across drones geographically
+  // (nidar_geotag's survivor_aggregator_node). Callers that want people must
+  // use that; the name change is what stops this being picked up by mistake.
+  const trackCount = Object.values(byDrone).reduce((sum, d) => sum + d.trackIds.size, 0);
   const observations = Object.values(byDrone).reduce((sum, d) => sum + d.count, 0);
-  return { byDrone, frames, total, observations };
+  return { byDrone, frames, trackCount, observations };
 }
