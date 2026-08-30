@@ -32,6 +32,10 @@ rosbags/
 *.zip
 PERSON_DETECTION_MODEL_V3*
 
+# Ignore DOCUMENTS directory except NIDAR_Implementation_Plan.md
+DOCUMENTS/*
+!DOCUMENTS/NIDAR_Implementation_Plan.md
+
 # IDE & Tool configuration / cache
 .claude/
 .vscode/
@@ -39,4 +43,5 @@ PERSON_DETECTION_MODEL_V3*
 .DS_Store
 *.swp
 *~
+
 
