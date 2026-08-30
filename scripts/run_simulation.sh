@@ -404,10 +404,29 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 
+# ---------------------------------------------------------------------------
+# 8. Telemetry health gate.
+#
+# Everything above can succeed while the stack is only PARTIALLY connected,
+# and until now this script printed "simulation is up" regardless. That is the
+# worst failure mode here: the operator sees drones marked OFFLINE in the GCS
+# and reasonably concludes the drones failed, when in fact they are flying and
+# publishing and only rosbridge cannot see them. See check_telemetry.py for
+# the mechanism. Report it here, in the launcher, where it is actually
+# actionable.
+# ---------------------------------------------------------------------------
+log "Verifying every drone's telemetry reaches the GCS..."
+if python3 "$SCRIPT_DIR/check_telemetry.py" "$DRONES" 20; then
+  TELEMETRY_LINE=" Telemetry:   all drones reporting to the GCS"
+else
+  TELEMETRY_LINE=" Telemetry:   DEGRADED -- see the failure reported above"
+fi
+
 echo ""
 echo "================================================================"
 echo " NIDAR RescueSwarm simulation is up"
 echo "================================================================"
+echo "$TELEMETRY_LINE"
 echo " GCS:         http://localhost:$GCS_PORT"
 echo " rosbridge:   ws://localhost:9090"
 echo " Drones:      $DRONES"

@@ -1,0 +1,39 @@
+# Persistent multicast route for NIDAR's ROS 2 / DDS discovery.
+#
+# `ip route add` only edits the live kernel routing table, so the route is lost
+# on every reboot and discovery silently degrades again. This unit re-adds it
+# at boot.
+#
+# Why it is needed: DDS announces participants to multicast group 239.255.0.1.
+# With no route for 224.0.0.0/4 those announcements go nowhere, leaving FastDDS
+# shared memory as the only discovery transport. That works until the graph
+# grows -- past roughly a hundred participants SHM port acquisition starts
+# failing and a participant maps only PART of the graph, permanently. When that
+# participant is rosbridge, the drones it cannot see read OFFLINE in the GCS
+# while flying perfectly. Measured: 2 of 4 drones offline, and the speed
+# monitor dead on all 4.
+#
+# `dev lo` rather than the Wi-Fi interface: every participant runs on this one
+# machine, and Wi-Fi access points routinely drop or deprioritise multicast.
+#
+# Install (once):
+#   sudo cp scripts/nidar-multicast-route.service /etc/systemd/system/
+#   sudo systemctl enable --now nidar-multicast-route.service
+#
+# Verify:  ip route show | grep 224.0.0.0/4
+# Remove:  sudo systemctl disable --now nidar-multicast-route.service
+
+[Unit]
+Description=NIDAR: multicast route for ROS 2/DDS discovery
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Succeed whether or not the route is already present.
+ExecStart=/bin/sh -c 'ip route show | grep -qE "^224\\.0\\.0\\.0/4" || ip route add 224.0.0.0/4 dev lo'
+ExecStop=/bin/sh -c 'ip route del 224.0.0.0/4 dev lo 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target

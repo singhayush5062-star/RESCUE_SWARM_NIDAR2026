@@ -68,14 +68,22 @@ def object_bridges(context: LaunchContext):
     for object_model in world.objects:
         object_model.use_sim_time = use_sim_time
         bridges, custom_bridges = object_model.bridges(world.world_name)
-        nodes.append(Node(
-            package='ros_gz_bridge',
-            executable='parameter_bridge',
-            namespace=object_model.model_name,
-            output='screen',
-            arguments=[bridge.argument() for bridge in bridges],
-            remappings=[bridge.remapping() for bridge in bridges]
-        ))
+        # NIDAR local patch: only spawn a bridge process for objects that
+        # actually have something to bridge. A static object -- no joints, no
+        # object_bridges, no tf_broadcaster, e.g. survivor_actor -- still got a
+        # full parameter_bridge here, bridging nothing. Each one is a complete
+        # DDS participant, and 14 survivors' worth of them pushed this host's
+        # graph past what FastDDS shared memory could serve, leaving rosbridge
+        # with only a partial view and drones reading OFFLINE in the GCS.
+        if bridges:
+            nodes.append(Node(
+                package='ros_gz_bridge',
+                executable='parameter_bridge',
+                namespace=object_model.model_name,
+                output='screen',
+                arguments=[bridge.argument() for bridge in bridges],
+                remappings=[bridge.remapping() for bridge in bridges]
+            ))
         nodes += custom_bridges
 
     return nodes

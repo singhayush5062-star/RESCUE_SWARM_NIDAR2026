@@ -42,17 +42,37 @@ if [[ -z "${GZ_IP_RESOLVED:-}" ]]; then
 fi
 export GZ_IP="$GZ_IP_RESOLVED"
 
-# Gazebo Transport discovery is multicast; without a route for 224.0.0.0/4 it
-# cannot send at all. Adding it needs root, so only attempt it when we can do
-# so without prompting, and say so plainly otherwise rather than failing later
-# in a way that looks like a simulator bug.
+# ROS 2 (FastDDS) and Gazebo Transport both discover over multicast. Without a
+# route for 224.0.0.0/4 the UDP path carries nothing, which leaves FastDDS
+# shared memory as the ONLY discovery transport on this host. That works until
+# the graph grows: past roughly a hundred participants SHM port acquisition
+# starts failing ("Failed init_port ... open_and_lock_file failed"), and a
+# participant that hits it maps only PART of the graph, permanently. When that
+# participant is rosbridge, the drones it cannot see read OFFLINE in the GCS
+# while flying and publishing perfectly normally.
+#
+# Measured on this machine: a UDP-only probe saw 0 of ~115 nodes, while a
+# UDP-only control pair discovered each other fine -- i.e. the transport works,
+# the routing does not.
+#
+# The route belongs on `lo`, not the Wi-Fi interface: every participant runs on
+# this one machine, and Wi-Fi access points routinely drop or deprioritise
+# multicast. Adding it needs root, so attempt it only when that costs no
+# prompt, and otherwise print the exact command rather than failing later in a
+# way that looks like a simulator bug.
+#
+# To undo:  sudo ip route del 224.0.0.0/4 dev lo
 if ! ip route show | grep -qE '^224\.0\.0\.0/4'; then
-  if [[ -n "$GZ_IFACE" ]] && sudo -n true 2>/dev/null; then
-    sudo -n ip route add 224.0.0.0/4 dev "$GZ_IFACE" 2>/dev/null \
-      && echo "Added multicast route on $GZ_IFACE"
+  if sudo -n true 2>/dev/null; then
+    sudo -n ip route add 224.0.0.0/4 dev lo 2>/dev/null \
+      && echo "Added multicast route on lo"
   else
-    echo "WARNING: no 224.0.0.0/4 multicast route. If drones never appear in" \
-         "the GCS, run: sudo ip route add 224.0.0.0/4 dev ${GZ_IFACE:-<iface>}"
+    echo "WARNING: no 224.0.0.0/4 multicast route -- ROS 2 discovery is running"
+    echo "         on shared memory alone. At this graph's size that silently"
+    echo "         half-connects it and drones show OFFLINE in the GCS."
+    echo "         Fix now:        sudo ip route add 224.0.0.0/4 dev lo"
+    echo "         Fix for good:   sudo cp scripts/nidar-multicast-route.service /etc/systemd/system/"
+    echo "                         sudo systemctl enable --now nidar-multicast-route.service"
   fi
 fi
 # FastDDS tuning is available but NOT enabled -- see config/fastdds_nidar.xml
