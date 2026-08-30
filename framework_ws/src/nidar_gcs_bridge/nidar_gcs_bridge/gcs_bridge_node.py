@@ -35,7 +35,7 @@ from std_msgs.msg import String
 
 from nidar_msgs.msg import (
     DetectionResult, DroneCommand, MissionCommand, MissionStatus, SurvivorCommand,
-    ZoneAllocation)
+    ZoneAllocation, SurvivorList)
 
 
 #: rcl_interfaces/msg/Log severity values, mirrored so this node does not
@@ -86,6 +86,13 @@ class GcsBridge(Node):
         self.gcs_drone_status_pub = self.create_publisher(String, '/gcs/drone_control/status', 10)
         self.gcs_survivor_status_pub = self.create_publisher(String, '/gcs/survivor_control/status', 10)
         self.gcs_survivors_list_pub = self.create_publisher(String, '/gcs/survivors/list', 10)
+        # Phase 3: the swarm's deduplicated belief about where survivors
+        # actually are, as opposed to /gcs/survivors/list -- which is the
+        # operator's own ground-truth dummy placements. Two different things
+        # that must stay separately visible: the whole point of the accuracy
+        # check is comparing one against the other.
+        self.gcs_survivors_aggregated_pub = self.create_publisher(
+            SurvivorList, '/gcs/survivors/aggregated', 10)
         self.gcs_log_pub = self.create_publisher(String, '/gcs/log', 50)
 
         # --- Inbound from GCS -----------------------------------------------
@@ -116,6 +123,8 @@ class GcsBridge(Node):
         self.create_subscription(String, '/nidar/drone_control_status', self._relay(self.gcs_drone_status_pub), 10)
         self.create_subscription(String, '/nidar/survivor_status', self._relay(self.gcs_survivor_status_pub), 10)
         self.create_subscription(String, '/nidar/survivors_list', self._relay(self.gcs_survivors_list_pub), 10)
+        self.create_subscription(SurvivorList, '/nidar/survivors/aggregated',
+                                 self._relay(self.gcs_survivors_aggregated_pub), 10)
 
         # /rosout -> /gcs/log. Depth 50, not 10: log lines are bursty and the
         # burst is exactly the part that explains a failure, so dropping it is

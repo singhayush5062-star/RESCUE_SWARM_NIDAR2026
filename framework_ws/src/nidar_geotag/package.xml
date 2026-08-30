@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>nidar_geotag</name>
+  <version>0.1.0</version>
+  <description>
+    Phase 3 geotagging: projects pixel-space person detections onto the ground
+    plane to produce world-frame survivor positions, and merges every drone's
+    tags into one deduplicated swarm-wide survivor list.
+  </description>
+  <maintainer email="singhayush5062@gmail.com">ayush</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <!-- NOTE: no doubled ASCII hyphens anywhere in this file, comments
+       included. A doubled hyphen inside an XML comment makes package.xml
+       unparseable, and colcon's response is not an error: it silently
+       downgrades the build type from ros.ament_python to python, skips the
+       ament_prefix_path hook, and the package then builds and installs
+       perfectly while being invisible to "ros2 launch" and "ros2 run".
+       That cost a full debugging session on nidar_detection; see
+       nidar_detection/tests/test_package_manifest.py, which now checks
+       every manifest in this workspace. -->
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>nidar_msgs</depend>
+  <depend>nidar_mission_manager</depend>
+  <depend>nidar_detection</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

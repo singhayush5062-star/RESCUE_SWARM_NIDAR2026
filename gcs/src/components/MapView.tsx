@@ -2,9 +2,10 @@ import { MapContainer, TileLayer, Marker, Popup, Polygon, Polyline, CircleMarker
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import type { DroneTelemetry } from '../types/drone';
+import type { DetectedSurvivor } from '../ros/useDetectedSurvivors';
 import type { MissionFile } from '../types/mission';
 import type { SurvivorList } from '../ros/useSurvivorControl';
-import { generateDroneWaypointsAtLaunchSite, isPointInPolygon, launchBoxCorners } from '../mission/launchSiteManager';
+import { generateDroneWaypointsAtLaunchSite, isPointInPolygon, launchBoxCorners, DEFAULT_MAP_CENTER } from '../mission/launchSiteManager';
 import 'leaflet/dist/leaflet.css';
 import './MapView.css';
 
@@ -42,6 +43,9 @@ interface MapViewProps {
   placingDroneNs?: string | null;
   drawnVertices?: [number, number][];
   survivors?: SurvivorList;
+  /** Where the geotag pipeline believes survivors are (algorithm output),
+   *  as distinct from `survivors` above (operator-placed ground truth). */
+  detectedSurvivors?: DetectedSurvivor[];
   onAddVertex?: (lat: number, lon: number) => void;
   onSetLaunchSite?: (lat: number, lon: number) => void;
   onAddSurvivor?: (lat: number, lon: number) => void;
@@ -49,7 +53,9 @@ interface MapViewProps {
   onDroneOutOfBox?: () => void;
 }
 
-const DEFAULT_CENTER: [number, number] = [28.682412, 77.499734];
+// One shared fallback -- see DEFAULT_MAP_CENTER's own comment for why
+// this used to be a literal repeated across four files.
+const DEFAULT_CENTER: [number, number] = DEFAULT_MAP_CENTER;
 
 function FitToBounds({ drones, mission }: { drones: DroneTelemetry[]; mission: MissionFile | null }) {
   const map = useMap();
@@ -138,6 +144,7 @@ export function MapView({
   placingDroneNs = null,
   drawnVertices = [],
   survivors = {},
+  detectedSurvivors = [],
   onAddVertex,
   onSetLaunchSite,
   onAddSurvivor,
@@ -374,7 +381,7 @@ export function MapView({
           </Marker>
         ))}
 
-        {/* Survivor Dummies */}
+        {/* Survivor Dummies -- ground truth the OPERATOR placed. */}
         {Object.entries(survivors).map(([id, [lat, lon]]) => (
           <CircleMarker
             key={id}
@@ -384,6 +391,45 @@ export function MapView({
             pathOptions={{ color: '#ef4444', fillColor: '#ff4d4d', fillOpacity: 0.9, weight: 2 }}
           >
             <Popup>🧍 Survivor Dummy #{id}</Popup>
+          </CircleMarker>
+        ))}
+
+        {/* Detected survivors -- what the SWARM found, from the geotag
+            pipeline. Drawn deliberately unlike the red dummies above: an
+            operator comparing the two is measuring detection accuracy, and
+            markers that look alike would defeat that. Hollow amber ring,
+            dashed, with the radius carrying confidence, so a tentative hit
+            reads as tentative instead of as a fact. */}
+        {detectedSurvivors.map((s) => (
+          <CircleMarker
+            key={`det-${s.survivorId}`}
+            center={[s.lat, s.lon]}
+            radius={7 + Math.max(0, Math.min(1, s.confidence)) * 6}
+            pathOptions={{
+              color: s.deliveryComplete ? '#22c55e' : s.deliveryAssigned ? '#eab308' : '#f59e0b',
+              fillColor: 'transparent',
+              fillOpacity: 0,
+              weight: 3,
+              dashArray: '4 3',
+            }}
+          >
+            <Popup>
+              <div style={{ fontFamily: 'monospace', fontSize: 11 }}>
+                <strong>🎯 Detected survivor #{s.survivorId}</strong>
+                <br />
+                {s.lat.toFixed(7)}, {s.lon.toFixed(7)}
+                <br />
+                confidence {(s.confidence * 100).toFixed(0)}%
+                <br />
+                first seen by {s.detectingDrone || 'unknown'}
+                <br />
+                {s.deliveryComplete
+                  ? 'delivery complete'
+                  : s.deliveryAssigned
+                  ? 'delivery en route'
+                  : 'awaiting delivery'}
+              </div>
+            </Popup>
           </CircleMarker>
         ))}
       </MapContainer>

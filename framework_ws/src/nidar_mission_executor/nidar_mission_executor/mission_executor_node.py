@@ -579,7 +579,32 @@ class MissionExecutor(Node):
                 self._launch_local[ns] = (float(pos[0]), float(pos[1]))
         return drone_positions
 
-    RTL_TIMEOUT_SEC = 120.0
+    #: Wall-clock bound on the WHOLE return-to-launch phase, shared across
+    #: every drone instead of granted to each one in turn. The old code gave
+    #: each thread its own 120s join, so four sequential joins could and did
+    #: run long past any single drone's transit: measured live, the joins
+    #: returned 170s in while drone3 was still flying, and landing began
+    #: underneath it.
+    RTL_TIMEOUT_SEC = 300.0
+
+    #: Vertical spacing between concurrent return transits. Every drone used
+    #: to fly home at the SAME altitude, so a drone still crossing the launch
+    #: box passed straight through the descent column of a drone already
+    #: landing. Measured consequence: drone2 reported itself home at earth
+    #: (-1.50, 2.36), then finished the run at (1.49, 2.37) -- 2.81m away,
+    #: parked on drone3's pad -- displaced after its own RTL had succeeded.
+    #: Staggering by index puts each transit in its own layer.
+    RTL_ALTITUDE_SEPARATION_M = 2.5
+
+    #: How close to its recorded launch point a drone must get before the
+    #: return counts as done. AS2's GoTo settles ~0.2m out on this airframe
+    #: (the same steady-state error documented for follow_path_threshold in
+    #: project_gazebo/config/config.yaml), so this is well clear of normal
+    #: convergence while still far inside the 3.66m launch box.
+    RTL_ARRIVAL_TOLERANCE_M = 0.6
+
+    #: Bound on the parallel landing phase.
+    LAND_TIMEOUT_SEC = 180.0
 
     def _compensate_gps_path(self, drone, ns: str, waypoints: list) -> list:
         """Rewrite mission-frame GPS waypoints into the frame AS2 will
@@ -646,8 +671,19 @@ class MissionExecutor(Node):
             f'({enu[0][0]:.2f},{enu[0][1]:.2f}) |{shift:.1f}m from plan origin')
         return [[c[0], c[1], wp[2]] for c, wp in zip(compensated, waypoints)]
 
+    def _launch_offset(self, drone: DroneInterfaceGPS, home) -> Optional[float]:
+        """Horizontal distance, in metres, from where `drone` actually is to
+        its recorded earth-frame launch point. Returns None if the drone has
+        no usable pose yet -- which is NOT the same as "it is at zero", the
+        distinction that made the old code report a successful return for a
+        drone it had never actually located."""
+        pos = drone.position
+        if not pos or len(pos) < 2 or not all(math.isfinite(v) for v in pos[:2]):
+            return None
+        return math.hypot(pos[0] - home[0], pos[1] - home[1])
+
     def _return_to_launch(self, interfaces: dict, drone_positions: dict,
-                           altitude_m: float, speed: float):
+                           altitude_m: float, speed: float) -> dict:
         """Fly every drone back over its own launch position before landing.
 
         AS2's land() descends wherever the drone currently is -- at the end
@@ -660,14 +696,35 @@ class MissionExecutor(Node):
         transit concurrently instead of serialising. Failures here are
         logged but not fatal: a drone that cannot get home should still be
         landed rather than left hovering until its battery runs out.
+
+        Three things this does that the first version did not, each of them
+        a measured failure rather than a precaution:
+
+        * **Transits are altitude-separated.** All four drones used to fly
+          home at one altitude. See RTL_ALTITUDE_SEPARATION_M for the run
+          where that put drone2 2.81m from its pad.
+        * **Arrival is verified, not assumed.** The old code logged
+          `drone.position` after go_to and moved on regardless of what it
+          said -- including the run where it printed a 0.18m error and the
+          drone then ended up 2.81m out. One retry is issued if the drone is
+          outside RTL_ARRIVAL_TOLERANCE_M.
+        * **The phase has one shared deadline.** Per-thread joins let the
+          phase overrun any individual drone's transit; see RTL_TIMEOUT_SEC.
+
+        Returns {namespace: bool} -- whether each drone is confirmed over its
+        launch point. Callers land every drone either way; the map is for
+        logging and for the caller to report an honest outcome.
         """
-        def _go_home(ns: str, drone: DroneInterfaceGPS):
+        arrived = {ns: False for ns in interfaces}
+
+        def _go_home(ns: str, drone: DroneInterfaceGPS, idx: int):
             home = (drone_positions or {}).get(ns)
             if home is None or not (math.isfinite(home[0]) and math.isfinite(home[1])):
                 self.get_logger().warn(
                     f'[{ns} rtl] no usable launch position ({home}), skipping return -- '
                     f'it will land where it finished its coverage leg')
                 return
+            transit_alt = altitude_m + idx * self.RTL_ALTITUDE_SEPARATION_M
             try:
                 # DroneInterfaceGPS assigns self.go_to = GoToGpsModule, so the
                 # only method available is go_to_gps_point -- there is no
@@ -693,23 +750,104 @@ class MissionExecutor(Node):
                 lat0, lon0, h0 = gps_origin
                 tgt_lat, tgt_lon = geo_utils.enu_to_latlon(
                     [(home[0], home[1])], lat0, lon0, h0)[0]
-                self.get_logger().info(
-                    f'[{ns} rtl] returning to launch earth=({home[0]:.2f},{home[1]:.2f}) '
-                    f'via compensated gps ({tgt_lat:.7f},{tgt_lon:.7f}) at {altitude_m}m')
-                drone.go_to.go_to_gps_point([tgt_lat, tgt_lon, altitude_m], speed=speed)
-                pos = drone.position
-                self.get_logger().info(
-                    f'[{ns} rtl] over launch position; now at '
-                    f'({pos[0]:.2f},{pos[1]:.2f}) target ({home[0]:.2f},{home[1]:.2f})')
+
+                for attempt in (1, 2):
+                    self.get_logger().info(
+                        f'[{ns} rtl] attempt {attempt}: returning to launch '
+                        f'earth=({home[0]:.2f},{home[1]:.2f}) via compensated gps '
+                        f'({tgt_lat:.7f},{tgt_lon:.7f}) at {transit_alt:.1f}m')
+                    drone.go_to.go_to_gps_point(
+                        [tgt_lat, tgt_lon, transit_alt], speed=speed)
+                    offset = self._launch_offset(drone, home)
+                    if offset is None:
+                        self.get_logger().warn(
+                            f'[{ns} rtl] no pose available after go_to; cannot confirm return')
+                        return
+                    if offset <= self.RTL_ARRIVAL_TOLERANCE_M:
+                        pos = drone.position
+                        self.get_logger().info(
+                            f'[{ns} rtl] over launch position ({offset:.2f}m); now at '
+                            f'({pos[0]:.2f},{pos[1]:.2f}) target ({home[0]:.2f},{home[1]:.2f})')
+                        arrived[ns] = True
+                        return
+                    self.get_logger().warn(
+                        f'[{ns} rtl] attempt {attempt} finished {offset:.2f}m from launch, '
+                        f'outside the {self.RTL_ARRIVAL_TOLERANCE_M:.2f}m tolerance')
+                self.get_logger().error(
+                    f'[{ns} rtl] did not reach its launch position after 2 attempts; '
+                    f'it will land where it is')
             except Exception as e:  # noqa: BLE001 - land anyway, see docstring
                 self.get_logger().error(f'[{ns} rtl] return failed: {e}')
 
-        threads = [threading.Thread(target=_go_home, args=(ns, d), daemon=True)
-                   for ns, d in interfaces.items()]
+        threads = [(ns, threading.Thread(target=_go_home, args=(ns, d, i), daemon=True))
+                   for i, (ns, d) in enumerate(sorted(interfaces.items()))]
+        for _, t in threads:
+            t.start()
+        # One deadline for the phase, not one per drone. Landing must not
+        # begin while a drone is still crossing the box.
+        deadline = time.monotonic() + self.RTL_TIMEOUT_SEC
+        for ns, t in threads:
+            t.join(timeout=max(0.0, deadline - time.monotonic()))
+            if t.is_alive():
+                self.get_logger().error(
+                    f'[{ns} rtl] still transiting when the {self.RTL_TIMEOUT_SEC:.0f}s '
+                    f'return window expired -- landing proceeds without it')
+        return arrived
+
+    def _land_all(self, interfaces: dict):
+        """Land every drone concurrently.
+
+        Landing used to be a plain `for ns, drone in interfaces.items()`
+        loop, and each land() blocks for the whole ~55s descent. Measured on
+        a 4-drone run: drone0 started landing at t+170s and drone2 not until
+        t+274s, so drone2 held a 224s hover with no active goal after its
+        own return had already completed -- and drone3, still flying its
+        return leg, crossed the box during that window. drone2 finished the
+        run 2.81m from its pad. Landing together removes both the long
+        unguarded hover and the overlap.
+
+        Each land is bounded by _call_physical_action's own timeout; the
+        joins here only stop a wedged thread from holding the mission open.
+        """
+        threads = [
+            threading.Thread(
+                target=self._call_physical_action,
+                args=(drone, (lambda d=drone: d.land(speed=0.4)),
+                      (self.STATE_LANDED, self.STATE_DISARMED), f'{ns} land'),
+                daemon=True)
+            for ns, drone in sorted(interfaces.items())
+        ]
         for t in threads:
             t.start()
+        deadline = time.monotonic() + self.LAND_TIMEOUT_SEC
         for t in threads:
-            t.join(timeout=self.RTL_TIMEOUT_SEC)
+            t.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    def _log_final_offsets(self, interfaces: dict, launch_local: dict):
+        """Report where every drone actually ended up, against where it took
+        off from.
+
+        Without this the only evidence of a bad landing was the RTL log line,
+        which is written BEFORE the descent and was measured saying 0.18m for
+        a drone that finished 2.81m out. This runs after touchdown, so it is
+        the number that actually settles whether a run landed in the box.
+        """
+        for ns, drone in sorted(interfaces.items()):
+            home = (launch_local or {}).get(ns)
+            if home is None:
+                self.get_logger().warn(f'[{ns} final] no recorded launch position to compare against')
+                continue
+            offset = self._launch_offset(drone, home)
+            if offset is None:
+                self.get_logger().warn(f'[{ns} final] no pose available; cannot confirm landing spot')
+                continue
+            pos = drone.position
+            inside = offset <= LAUNCH_BOX_SIZE_M / 2.0
+            msg = (f'[{ns} final] landed ({pos[0]:.2f},{pos[1]:.2f}), '
+                   f'{offset:.2f}m from launch ({home[0]:.2f},{home[1]:.2f}) -- '
+                   f'{"inside" if inside else "OUTSIDE"} the '
+                   f'{LAUNCH_BOX_SIZE_M:.2f}m launch box')
+            (self.get_logger().info if inside else self.get_logger().error)(msg)
 
     def _disarm_stuck_drones(self, interfaces: dict):
         """Best-effort cleanup after a failed mission.
@@ -859,10 +997,8 @@ class MissionExecutor(Node):
             self._return_to_launch(interfaces, self._launch_local, altitude, speed)
 
             self._publish_status('landing', 'landing all drones')
-            for ns, drone in interfaces.items():
-                self._call_physical_action(
-                    drone, lambda d=drone: d.land(speed=0.4),
-                    (self.STATE_LANDED, self.STATE_DISARMED), f'{ns} land')
+            self._land_all(interfaces)
+            self._log_final_offsets(interfaces, self._launch_local)
 
             self._publish_status('complete', 'mission finished')
             succeeded = True
@@ -1014,10 +1150,8 @@ class MissionExecutor(Node):
             self._return_to_launch(interfaces, self._launch_local, scan_altitude, speed)
 
             self._publish_status('landing', 'landing all drones')
-            for ns, drone in interfaces.items():
-                self._call_physical_action(
-                    drone, lambda d=drone: d.land(speed=0.4),
-                    (self.STATE_LANDED, self.STATE_DISARMED), f'{ns} land')
+            self._land_all(interfaces)
+            self._log_final_offsets(interfaces, self._launch_local)
 
             self._publish_status('complete', 'mission finished')
             succeeded = True

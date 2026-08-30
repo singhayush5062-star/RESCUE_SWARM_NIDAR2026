@@ -8,6 +8,7 @@ import { useMissionProgress } from './ros/useMissionProgress';
 import { useDetections } from './ros/useDetections';
 import { useDroneControl } from './ros/useDroneControl';
 import { useSurvivorControl } from './ros/useSurvivorControl';
+import { useDetectedSurvivors } from './ros/useDetectedSurvivors';
 import { useMissionLog } from './ros/useMissionLog';
 import { MapView } from './components/MapView';
 import { DroneStatusPanel } from './components/DroneStatusPanel';
@@ -22,11 +23,13 @@ import { LogsConsolePanel } from './components/LogsConsolePanel';
 import { MissionSummaryModal } from './components/MissionSummaryModal';
 
 import {
+  DEFAULT_MAP_CENTER,
   calculateCentroid,
   calculatePolygonAreaM2,
   createMissionFromLaunchSiteAndBoundary,
   defaultDroneLaunchPositions,
   generateRandomDroneLaunchPositions,
+  generateRandomPositionsNear,
   generateRandomLaunchSiteInKml,
   generateRandomPointsInPolygon,
   generateRandomBoundaryArea,
@@ -72,6 +75,9 @@ function App() {
   const plannedPaths = useMissionPlannedPaths(loadedMission);
   const droneControl = useDroneControl();
   const survivorControl = useSurvivorControl();
+  // Phase 3: what the geotag pipeline found, kept separate from the
+  // operator-placed ground-truth dummies above.
+  const detectedSurvivors = useDetectedSurvivors();
   // Backend log stream (/gcs/log <- /rosout, filtered by nidar_gcs_bridge).
   const missionLog = useMissionLog();
   // Every drone-command reply the backend has sent, echoed into the console.
@@ -104,11 +110,37 @@ function App() {
 
   // Standalone Simulation Telemetry Generator
   const [simDrones, setSimDrones] = useState<Record<string, { lat: number; lon: number; alt: number; heading: number; batt: number; speed: number }>>({
-    drone0: { lat: 28.682412, lon: 77.499734, alt: 0.0, heading: 0, batt: 98, speed: 0.0 },
-    drone1: { lat: 28.682420, lon: 77.499740, alt: 0.0, heading: 90, batt: 97, speed: 0.0 },
-    drone2: { lat: 28.682400, lon: 77.499720, alt: 0.0, heading: 180, batt: 99, speed: 0.0 },
-    drone3: { lat: 28.682390, lon: 77.499750, alt: 0.0, heading: 270, batt: 96, speed: 0.0 },
+    drone0: { lat: DEFAULT_MAP_CENTER[0] + 0.000000, lon: DEFAULT_MAP_CENTER[1] + 0.000000, alt: 0.0, heading: 0, batt: 98, speed: 0.0 },
+    drone1: { lat: DEFAULT_MAP_CENTER[0] + 0.000008, lon: DEFAULT_MAP_CENTER[1] + 0.000006, alt: 0.0, heading: 90, batt: 97, speed: 0.0 },
+    drone2: { lat: DEFAULT_MAP_CENTER[0] - 0.000012, lon: DEFAULT_MAP_CENTER[1] - 0.000014, alt: 0.0, heading: 180, batt: 99, speed: 0.0 },
+    drone3: { lat: DEFAULT_MAP_CENTER[0] - 0.000022, lon: DEFAULT_MAP_CENTER[1] + 0.000016, alt: 0.0, heading: 270, batt: 96, speed: 0.0 },
   });
+
+  // Where the swarm actually is, according to the swarm.
+  //
+  // Everything that needs a reference point -- the random arena centre, the
+  // nearby drone scatter -- used to fall back to a coordinate literal copied
+  // into four files. That is only ever right for one simulator world, and it
+  // is never right for real hardware flown anywhere else. The drones publish
+  // their own position; that is the authoritative answer.
+  //
+  // Latched on the FIRST fix rather than recomputed: it is a mission
+  // reference point, and a centroid that follows four drones around the
+  // arena would silently move the "random arena" and "scatter" targets to
+  // wherever the swarm happened to be mid-flight.
+  const [swarmOrigin, setSwarmOrigin] = useState<[number, number] | null>(null);
+  useEffect(() => {
+    if (swarmOrigin) return;
+    const fixes = realDrones
+      .filter((d) => d.gps)
+      .map((d) => [d.gps!.lat, d.gps!.lon] as [number, number]);
+    if (fixes.length === 0) return;
+    setSwarmOrigin(calculateCentroid(fixes));
+  }, [realDrones, swarmOrigin]);
+
+  /** Mission home if one is loaded, else live GPS, else the fallback constant. */
+  const mapOrigin: [number, number] =
+    (loadedMission?.home as [number, number] | undefined) ?? swarmOrigin ?? DEFAULT_MAP_CENTER;
 
   const currentStatusState = status?.state || 'idle';
 
@@ -212,12 +244,17 @@ function App() {
     if (real.gps) {
       return real;
     }
-    const sim = simDrones[ns] || { lat: 28.682412, lon: 77.499734, alt: 0, heading: 0, batt: 100, speed: 0 };
+    const sim = simDrones[ns] || {
+      lat: DEFAULT_MAP_CENTER[0], lon: DEFAULT_MAP_CENTER[1],
+      alt: 0, heading: 0, batt: 100, speed: 0,
+    };
     return {
       namespace: ns,
       connected: false,
       gps: { lat: sim.lat, lon: sim.lon, alt: sim.alt, stamp: Date.now() },
       battery: { percentage: sim.batt, voltage: 16.2 },
+      speed: sim.speed,
+      verticalSpeed: null,
       lastUpdate: Date.now(),
     };
   });
@@ -262,7 +299,7 @@ function App() {
   }
 
   function handleGenerateRandomBoundary() {
-    const center = loadedMission?.home || [28.682412, 77.499734];
+    const center = mapOrigin;
     const boundary = generateRandomBoundaryArea(center, 70);
     setDrawnVertices(boundary);
     const newMission: MissionFile = createMissionFromLaunchSiteAndBoundary(
@@ -331,11 +368,38 @@ function App() {
 
   function handleRandomizeDronePositions() {
     const center = loadedMission?.home;
-    if (!center) return;
+    // The button is disabled without a launch site, but the guard stays --
+    // and now says why, instead of returning silently the way it used to.
+    if (!center) {
+      addLog('WARN', 'GCS', 'No launch site set — use SCATTER NEAR GPS, or set a launch site first.');
+      return;
+    }
     const positions = generateRandomDroneLaunchPositions(center, DRONE_NAMESPACES);
     updateMission({ drone_launch_positions: positions });
     Object.entries(positions).forEach(([ns, [lat, lon]]) =>
       droneControl.setLaunchPosition(ns, lat, lon));
+    addLog('CMD', 'GCS', `Scattered ${Object.keys(positions).length} drones inside the 12ft launch box.`);
+  }
+
+  /** Scatter the swarm at random points near wherever its own GPS says it is.
+   *
+   * This is the pre-launch-site case: no 12ft box exists yet, so the backend
+   * skips its box check (mission_executor `_launch_box_center is None`) and
+   * accepts the placements. Once a launch site IS drawn, handleSetLaunchSite
+   * moves every drone into the box and the backend enforces it from then on. */
+  function handleScatterDronesNearby() {
+    const center = swarmOrigin ?? (loadedMission?.home as [number, number] | undefined);
+    if (!center) {
+      addLog('WARN', 'GCS', 'No GPS fix from any drone yet — cannot place the swarm.');
+      return;
+    }
+    const positions = generateRandomPositionsNear(center, DRONE_NAMESPACES);
+    updateMission({ drone_launch_positions: positions });
+    Object.entries(positions).forEach(([ns, [lat, lon]]) =>
+      droneControl.setLaunchPosition(ns, lat, lon));
+    addLog('CMD', 'GCS',
+      `Scattered ${Object.keys(positions).length} drones near GPS ` +
+      `${center[0].toFixed(6)}, ${center[1].toFixed(6)}.`);
   }
 
   function handleClearBoundary() {
@@ -419,6 +483,7 @@ function App() {
                   isPlacingSurvivor={isPlacingSurvivor}
                   drawnVertices={drawnVertices}
                   survivors={survivorControl.survivors}
+                  detectedSurvivors={detectedSurvivors}
                   onAddVertex={handleAddVertex}
                   onSetLaunchSite={handleSetLaunchSite}
                   onAddSurvivor={survivorControl.addSurvivor}
@@ -464,6 +529,8 @@ function App() {
                 onGenerateRandomBoundary={handleGenerateRandomBoundary}
                 onRandomizeLaunchSite={handleRandomizeLaunchSite}
                 onRandomizeDronePositions={handleRandomizeDronePositions}
+                onScatterDronesNearby={handleScatterDronesNearby}
+                hasLaunchSite={Boolean(loadedMission?.home)}
                 onTogglePlaceDrone={handleTogglePlaceDrone}
                 onResetDronePositions={handleResetDronePositions}
                 onClearBoundary={handleClearBoundary}
@@ -491,6 +558,7 @@ function App() {
                   isPlacingSurvivor={isPlacingSurvivor}
                   drawnVertices={drawnVertices}
                   survivors={survivorControl.survivors}
+                  detectedSurvivors={detectedSurvivors}
                   onAddVertex={handleAddVertex}
                   onSetLaunchSite={handleSetLaunchSite}
                   onAddSurvivor={survivorControl.addSurvivor}
@@ -525,6 +593,7 @@ function App() {
                   isPlacingSurvivor={isPlacingSurvivor}
                   drawnVertices={drawnVertices}
                   survivors={survivorControl.survivors}
+                  detectedSurvivors={detectedSurvivors}
                   onAddVertex={handleAddVertex}
                   onSetLaunchSite={handleSetLaunchSite}
                   onAddSurvivor={survivorControl.addSurvivor}

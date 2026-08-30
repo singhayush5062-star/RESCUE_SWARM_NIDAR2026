@@ -3,7 +3,6 @@ import type { ExecutionMode } from '../types/gcs';
 import './DroneStatusPanel.css';
 
 interface DetailedTelemetry {
-  speed?: number;
   heading?: number;
   satellites?: number;
   rssi?: number;
@@ -45,7 +44,10 @@ export function DroneStatusPanel({
           // whose entire job is telling the operator which drones are alive.
           const isConnected = drone.connected;
           const alt = drone.gps?.alt ?? 0.0;
-          const speed = drone.speed ?? 0.0;
+          // Same rule as sats/rssi/ekf below: null means nothing has
+          // published a velocity, which must not render as a measured 0.0.
+          const speed = drone.speed;
+          const vSpeed = drone.verticalSpeed;
           const battPercent = drone.battery?.percentage ?? 100;
           const battVoltage = drone.battery?.voltage ?? 16.8;
           // Undefined means "this telemetry is not published yet", not a
@@ -98,7 +100,13 @@ export function DroneStatusPanel({
                 <div className="metric-item">
                   <span className="metric-label">SPEED</span>
                   <span className="metric-value">
-                    {speed.toFixed(1)} m/s{rssi !== undefined ? ` (${rssi} dBm)` : ''}
+                    {speed === null || speed === undefined
+                      ? '—'
+                      : `${speed.toFixed(1)} m/s`}
+                    {vSpeed !== null && vSpeed !== undefined && Math.abs(vSpeed) >= 0.1
+                      ? ` ${vSpeed > 0 ? '↑' : '↓'}${Math.abs(vSpeed).toFixed(1)}`
+                      : ''}
+                    {rssi !== undefined ? ` (${rssi} dBm)` : ''}
                   </span>
                 </div>
 

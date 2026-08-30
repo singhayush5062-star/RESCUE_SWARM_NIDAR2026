@@ -119,6 +119,8 @@ stop_all() {
   pkill -9 -f "survivor_manager_node" 2>/dev/null
   pkill -9 -f "mission_clock_node" 2>/dev/null
   pkill -9 -f "detection_node" 2>/dev/null
+  pkill -9 -f "geotag_node" 2>/dev/null
+  pkill -9 -f "survivor_aggregator_node" 2>/dev/null
   # nidar_detection also ships a dataset-capture tool that arms and flies a
   # drone. It is run by hand rather than by this script, but it must still be
   # killed here -- confirmed live, three orphaned copies survived a stop and
@@ -362,6 +364,29 @@ if [[ "$NIDAR_DETECTION" == "true" ]]; then
     sleep 3
     log "Detection nodes are up."
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# 6c. Geotagging (Phase 3) — one geotag node per drone plus the single swarm
+#     survivor aggregator. Turns nidar_detection's pixel bounding boxes into
+#     lat/lon survivor positions and merges every drone's view of the same
+#     person into one list on /nidar/survivors/aggregated.
+#
+#     Gated on detection: without DetectionResult messages a geotag node has
+#     nothing to project, so starting it alone would add four idle nodes and
+#     an empty topic that looks like a failure. NIDAR_GEOTAG=false skips it
+#     while leaving detection running.
+# ---------------------------------------------------------------------------
+NIDAR_GEOTAG="${NIDAR_GEOTAG:-true}"
+if [[ "$NIDAR_DETECTION" == "true" && "$NIDAR_GEOTAG" == "true" ]]; then
+  log "Starting geotag nodes + survivor aggregator..."
+  nohup ros2 launch nidar_geotag geotag.launch.py \
+    "drone_ids:=$DRONES" \
+    "min_confidence:=${NIDAR_GEOTAG_CONF:-0.5}" \
+    "ground_altitude_m:=${NIDAR_GEOTAG_GROUND_ALT:-0.0}" \
+    > "$LOG_DIR/geotag.log" 2>&1 &
+  sleep 3
+  log "Geotag nodes are up."
 fi
 
 # ---------------------------------------------------------------------------

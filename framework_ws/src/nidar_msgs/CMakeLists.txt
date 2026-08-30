@@ -15,6 +15,7 @@ find_package(action_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DetectionResult.msg"
   "msg/SurvivorTag.msg"
+  "msg/SurvivorList.msg"
   "msg/PayloadStatus.msg"
   "msg/MissionBoundary.msg"
   "msg/ZoneAllocation.msg"

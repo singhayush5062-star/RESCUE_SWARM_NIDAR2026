@@ -6,6 +6,19 @@ import type { MissionFile } from '../types/mission';
 const METERS_PER_DEGREE_LAT = 111320.0;
 
 /**
+ * Last-resort map centre, used only until a real GPS fix arrives.
+ *
+ * This is the simulator world's own origin from world_swarm.yaml. It used to
+ * be written out as a bare literal in four separate places (App's mock
+ * telemetry seed, App's mock fallback, App's random-boundary centre and
+ * MapView's DEFAULT_CENTER), so "where is the swarm?" had four independent
+ * answers and changing the world origin fixed none of them. Everything that
+ * needs a centre now derives it from live GPS and falls back to this one
+ * constant -- see `swarmOrigin` in App.tsx.
+ */
+export const DEFAULT_MAP_CENTER: [number, number] = [28.682412, 77.499734];
+
+/**
  * Checks if a [lat, lon] point lies strictly inside a polygon boundary defined by [lat, lon] vertices.
  * Uses the Ray-Casting algorithm.
  */
@@ -85,7 +98,7 @@ export function generateRandomLaunchSiteInKml(polygon: [number, number][]): [num
  * Generates a random realistic convex polygon mapping area around a center point.
  */
 export function generateRandomBoundaryArea(
-  center: [number, number] = [28.682412, 77.499734],
+  center: [number, number] = DEFAULT_MAP_CENTER,
   radiusMeters: number = 60,
 ): [number, number][] {
   const [centerLat, centerLon] = center;
@@ -209,6 +222,55 @@ export function generateRandomDroneLaunchPositions(
   droneNamespaces.forEach((ns, i) => {
     if (points[i]) result[ns] = points[i];
   });
+  return result;
+}
+
+/**
+ * Scatters drones at random points within `radiusMeters` of `center`.
+ *
+ * Distinct from generateRandomDroneLaunchPositions, which samples inside the
+ * fixed 12ft launch box and therefore needs a launch station to exist first.
+ * This one is for the state *before* any station has been drawn: the swarm's
+ * own GPS says where it is, and the operator wants the drones spread out
+ * near there rather than stacked on the world origin. The backend accepts
+ * these because set_launch_position only enforces the box once a mission
+ * with a `home` has been loaded (mission_executor's `_launch_box_center`).
+ *
+ * Sampling is uniform in area (sqrt of the radius fraction), not uniform in
+ * radius -- the naive version clusters everything at the centre, which is
+ * the one thing this is meant to avoid.
+ */
+export function generateRandomPositionsNear(
+  center: [number, number],
+  droneNamespaces: string[] = ['drone0', 'drone1', 'drone2', 'drone3'],
+  radiusMeters: number = 6.0,
+  minSeparationM: number = 1.5,
+): Record<string, [number, number]> {
+  const [centerLat, centerLon] = center;
+  const cosLat = Math.cos((centerLat * Math.PI) / 180.0);
+  const result: Record<string, [number, number]> = {};
+  const placed: [number, number][] = [];
+
+  for (const ns of droneNamespaces) {
+    let candidate: [number, number] | null = null;
+    for (let attempt = 0; attempt < 500 && !candidate; attempt++) {
+      const angle = Math.random() * 2 * Math.PI;
+      const r = radiusMeters * Math.sqrt(Math.random());
+      const point: [number, number] = [
+        centerLat + (r * Math.sin(angle)) / METERS_PER_DEGREE_LAT,
+        centerLon + (r * Math.cos(angle)) / (METERS_PER_DEGREE_LAT * cosLat),
+      ];
+      if (placed.some((p) => approxDistanceMeters(p, point) < minSeparationM)) continue;
+      candidate = point;
+    }
+    // Falling back to the centre would stack drones on each other, which is
+    // exactly the collision this separation check exists to prevent, so an
+    // unplaceable drone is simply left where it is.
+    if (!candidate) continue;
+    placed.push(candidate);
+    result[ns] = candidate;
+  }
+
   return result;
 }
 
