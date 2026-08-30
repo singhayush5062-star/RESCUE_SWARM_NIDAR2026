@@ -32,6 +32,14 @@ def _spawn(context):
         'prefer_ncnn_on_cpu':
             LaunchConfiguration('prefer_ncnn_on_cpu').perform(context).lower()
             in ('1', 'true', 'yes'),
+        # Detections carry the camera frame's own stamp downstream to
+        # nidar_geotag, which looks up TF at exactly that time. In simulation
+        # that stamp is sim time, so this node has to be on the same clock as
+        # Gazebo and AS2 or the stamp it forwards is meaningless. Defaults to
+        # false so real hardware, which has no /clock, is unaffected.
+        'use_sim_time':
+            LaunchConfiguration('use_sim_time').perform(context).lower()
+            in ('1', 'true', 'yes'),
     }
     return [
         Node(
@@ -63,6 +71,7 @@ def generate_launch_description():
         DeclareLaunchArgument('device', default_value='auto',
                               description="'auto', 'cpu', or a CUDA device index."),
         DeclareLaunchArgument('input_size', default_value='640'),
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument(
             'prefer_ncnn_on_cpu', default_value='true',
             description='On CPU, load the *_ncnn_model/ export beside model_path '

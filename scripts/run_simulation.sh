@@ -360,6 +360,7 @@ if [[ "$NIDAR_DETECTION" == "true" ]]; then
       "inference_rate_hz:=${NIDAR_DETECTION_HZ:-2.0}" \
       "confidence_threshold:=${NIDAR_DETECTION_CONF:-0.5}" \
       "device:=${NIDAR_DETECTION_DEVICE:-auto}" \
+      "use_sim_time:=true" \
       > "$LOG_DIR/detection.log" 2>&1 &
     sleep 3
     log "Detection nodes are up."
@@ -384,6 +385,7 @@ if [[ "$NIDAR_DETECTION" == "true" && "$NIDAR_GEOTAG" == "true" ]]; then
     "drone_ids:=$DRONES" \
     "min_confidence:=${NIDAR_GEOTAG_CONF:-0.5}" \
     "ground_altitude_m:=${NIDAR_GEOTAG_GROUND_ALT:-0.0}" \
+    "use_sim_time:=true" \
     > "$LOG_DIR/geotag.log" 2>&1 &
   sleep 3
   log "Geotag nodes are up."

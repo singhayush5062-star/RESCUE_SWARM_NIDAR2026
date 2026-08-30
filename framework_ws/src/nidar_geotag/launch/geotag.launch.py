@@ -21,6 +21,15 @@ def _spawn(context):
     ground_alt = float(LaunchConfiguration('ground_altitude_m').perform(context))
     local_r = float(LaunchConfiguration('local_dedup_radius_m').perform(context))
     global_r = float(LaunchConfiguration('global_dedup_radius_m').perform(context))
+    # Must match the clock the TF publishers use. Gazebo and every AS2 node run
+    # on sim time, and a detection carries the camera frame's own sim-time
+    # stamp; a geotag node left on the wall clock sees those transforms as
+    # decades stale and evicts them from the tf2 cache immediately, so every
+    # single lookup fails. Measured with this unset: 3 of 4 drones dropped
+    # 100% of detections as no_tf and produced zero tags. Defaults to false so
+    # real hardware, which has no /clock, is unaffected.
+    use_sim_time = LaunchConfiguration('use_sim_time').perform(context).lower() \
+        in ('true', '1', 'yes')
 
     nodes = [
         Node(
@@ -36,6 +45,7 @@ def _spawn(context):
                 'min_confidence': min_conf,
                 'ground_altitude_m': ground_alt,
                 'local_dedup_radius_m': local_r,
+                'use_sim_time': use_sim_time,
             }],
         )
         for ns in drone_ids
@@ -48,6 +58,7 @@ def _spawn(context):
         parameters=[{
             'drone_ids': drone_ids,
             'global_dedup_radius_m': global_r,
+            'use_sim_time': use_sim_time,
         }],
     ))
     return nodes
@@ -60,5 +71,6 @@ def generate_launch_description():
         DeclareLaunchArgument('ground_altitude_m', default_value='0.0'),
         DeclareLaunchArgument('local_dedup_radius_m', default_value='2.0'),
         DeclareLaunchArgument('global_dedup_radius_m', default_value='2.5'),
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
         OpaqueFunction(function=_spawn),
     ])
