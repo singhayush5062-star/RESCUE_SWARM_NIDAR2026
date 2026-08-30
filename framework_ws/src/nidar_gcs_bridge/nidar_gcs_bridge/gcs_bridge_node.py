@@ -25,8 +25,10 @@ boundary, matching how the two downstream nodes already interpret them:
 
 import json
 import math
+import time
 
 import rclpy
+from rcl_interfaces.msg import Log
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -36,12 +38,39 @@ from nidar_msgs.msg import (
     ZoneAllocation)
 
 
+#: rcl_interfaces/msg/Log severity values, mirrored so this node does not
+#: need the constants import just to compare an int.
+LOG_LEVEL_NAMES = {10: 'DEBUG', 20: 'INFO', 30: 'WARN', 40: 'ERROR', 50: 'FATAL'}
+
+#: Node-name fragments whose log output an operator actually wants to see:
+#: NIDAR's own nodes, plus the AS2 behaviors that narrate flight (takeoff,
+#: path following, landing) and the platform that reports arming.
+#:
+#: An allow-list, not a deny-list, because /rosout carries every node in the
+#: graph -- 120 publishers in a 4-drone run -- and the bulk of it is
+#: transform_listener_impl_* and ros_gz bridge chatter that means nothing to
+#: an operator and would be the whole of any traffic spike.
+DEFAULT_LOG_SOURCES = [
+    'mission_executor', 'gcs_bridge', 'survivor_manager', 'mission_clock',
+    'detection_', 'TakeoffBehavior', 'FollowPathBehavior', 'LandBehavior',
+    'GoToBehavior', 'platform',
+]
+
+
 class GcsBridge(Node):
 
     def __init__(self):
         super().__init__('gcs_bridge')
 
         self.declare_parameter('drone_ids', ['drone0', 'drone1', 'drone2', 'drone3'])
+        # Console-log relay. Defaults chosen from a live measurement: during
+        # an active 4-drone coverage mission with detection running, /rosout
+        # carried 3.5 msg/s totalling 0.8 KB/s -- so the cost of forwarding
+        # the filtered subset to the browser is negligible, and the cap below
+        # exists only to survive a node stuck in an error loop.
+        self.declare_parameter('log_sources', DEFAULT_LOG_SOURCES)
+        self.declare_parameter('min_log_level', 20)      # INFO
+        self.declare_parameter('max_log_rate_hz', 20.0)
 
         # --- Outbound to internal NIDAR nodes -----------------------------
         self.mission_command_pub = self.create_publisher(MissionCommand, '/nidar/mission_command', 10)
@@ -57,6 +86,7 @@ class GcsBridge(Node):
         self.gcs_drone_status_pub = self.create_publisher(String, '/gcs/drone_control/status', 10)
         self.gcs_survivor_status_pub = self.create_publisher(String, '/gcs/survivor_control/status', 10)
         self.gcs_survivors_list_pub = self.create_publisher(String, '/gcs/survivors/list', 10)
+        self.gcs_log_pub = self.create_publisher(String, '/gcs/log', 50)
 
         # --- Inbound from GCS -----------------------------------------------
         self.create_subscription(String, '/gcs/mission_load', self._on_mission_load, 10)
@@ -87,6 +117,17 @@ class GcsBridge(Node):
         self.create_subscription(String, '/nidar/survivor_status', self._relay(self.gcs_survivor_status_pub), 10)
         self.create_subscription(String, '/nidar/survivors_list', self._relay(self.gcs_survivors_list_pub), 10)
 
+        # /rosout -> /gcs/log. Depth 50, not 10: log lines are bursty and the
+        # burst is exactly the part that explains a failure, so dropping it is
+        # the wrong trade here.
+        self._log_sources = [str(x) for x in self.get_parameter('log_sources').value]
+        self._min_log_level = int(self.get_parameter('min_log_level').value)
+        self._max_log_rate = float(self.get_parameter('max_log_rate_hz').value)
+        self._log_window_start = 0.0
+        self._log_window_count = 0
+        self._log_suppressed = 0
+        self.create_subscription(Log, '/rosout', self._on_rosout, 50)
+
         self.get_logger().info(
             'gcs_bridge ready | relaying detections for '
             f"{list(self.get_parameter('drone_ids').value or [])}")
@@ -101,6 +142,62 @@ class GcsBridge(Node):
     # ------------------------------------------------------------------
     # Mission load/start -> MissionCommand
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # /rosout -> /gcs/log
+    # ------------------------------------------------------------------
+
+    def _on_rosout(self, msg: Log):
+        """Forward operator-relevant log lines to the GCS console.
+
+        Three things happen here that the browser must not be asked to do:
+
+        1. Filter by publisher. /rosout is every node in the graph; the
+           operator wants the flight behaviors and NIDAR's own nodes, not
+           transform_listener_impl_*.
+        2. Floor the severity, so a debugging-level firehose cannot be
+           enabled by accident from the UI side.
+        3. Cap the rate. A node stuck in an error loop can emit hundreds of
+           identical lines a second; past the cap this counts them and emits
+           one summary line instead, so the panel degrades into a summary
+           rather than locking up the tab.
+        """
+        if msg.level < self._min_log_level:
+            return
+        if not any(src in msg.name for src in self._log_sources):
+            return
+
+        now = time.monotonic()
+        if now - self._log_window_start >= 1.0:
+            # Window rolled over. Report anything the previous one dropped
+            # before forwarding again, so suppression is never silent.
+            if self._log_suppressed:
+                self._publish_log(
+                    'WARN', 'gcs_bridge',
+                    f'suppressed {self._log_suppressed} log message(s) over the '
+                    f'{self._max_log_rate:g}/s cap')
+                self._log_suppressed = 0
+            self._log_window_start = now
+            self._log_window_count = 0
+
+        if self._log_window_count >= self._max_log_rate:
+            self._log_suppressed += 1
+            return
+        self._log_window_count += 1
+
+        self._publish_log(LOG_LEVEL_NAMES.get(msg.level, str(msg.level)),
+                          msg.name, msg.msg)
+
+    def _publish_log(self, level: str, source: str, message: str):
+        """Emit one console line as JSON, matching the GCS's LogEntry shape."""
+        self.gcs_log_pub.publish(String(data=json.dumps({
+            'level': level,
+            'source': source,
+            'message': message,
+            # Wall-clock seconds. The GCS formats it; sending a preformatted
+            # string here would bake this machine's locale into the wire.
+            'stamp': time.time(),
+        })))
 
     def _on_mission_load(self, msg: String):
         try:

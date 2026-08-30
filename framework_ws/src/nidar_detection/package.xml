@@ -22,7 +22,21 @@
        otherwise tries to auto-install it at the first track() call, into a
        root-owned dist-packages directory, which fails with EACCES and
        surfaces only as "inference failed: No module named 'lap'" on every
-       single frame -- confirmed live across all four detection nodes. -->
+       single frame, confirmed live across all four detection nodes.
+
+       `ncnn` is what loads the *_ncnn_model/ export, which is the backend
+       this node picks whenever inference lands on CPU (3x faster than
+       PyTorch there). Without it the node silently runs the slower .pt
+       instead. Install it with pip (package name: ncnn).
+
+       NOTE: keep this comment free of double hyphens. A doubled ASCII
+       hyphen is illegal inside an XML comment, and an unparseable
+       package.xml does not fail loudly: colcon silently downgrades it from
+       ros.ament_python
+       to plain python, which skips the ament_prefix_path hook, which leaves
+       the package off AMENT_PREFIX_PATH, so `ros2 launch nidar_detection`
+       reports "package not found" for a package that built and installed
+       perfectly. That cost a whole debugging session. -->
   <test_depend>python3-pytest</test_depend>
 
   <export>

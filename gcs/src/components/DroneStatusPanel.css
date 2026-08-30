@@ -1,68 +1,72 @@
-.status-panel {
+.drone-status-container {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
-.rosbridge-status {
-  font-size: 13px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  text-align: center;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+.drone-card-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
 }
 
-.rosbridge-status--connected { background: #16351f; color: #4ade80; }
-.rosbridge-status--connecting { background: #3a2f10; color: #fbbf24; }
-.rosbridge-status--disconnected,
-.rosbridge-status--error { background: #3a1414; color: #f87171; }
-
-.drone-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.drone-status-card {
+  background-color: var(--surface-container-low);
+  border: 1px solid var(--border-dark);
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
+  transition: border-color 0.2s ease;
 }
 
-.drone-card {
-  background: #1a1f27;
-  border-radius: 8px;
-  padding: 10px 12px;
-  border: 1px solid #262c36;
+.drone-status-card.active-drone {
+  border-color: var(--primary);
 }
 
-.drone-card__header {
+.drone-card-top {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 6px;
+  justify-content: space-between;
 }
 
-.drone-card__name {
-  font-weight: 600;
-  font-size: 14px;
+.drone-title-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.drone-card__dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #4ade80;
-}
-
-.drone-card.disconnected .drone-card__dot {
-  background: #f87171;
-}
-
-.drone-card__row {
+.drone-name {
+  font-family: var(--font-mono);
+  font-weight: 700;
   font-size: 12px;
-  color: #b7bfcc;
+  color: var(--text-main);
+  text-transform: uppercase;
 }
 
-.drone-card__row--muted {
-  color: #6b7280;
+.drone-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-dark);
+  font-size: 11px;
+}
+
+.metric-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+
+.metric-value {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-main);
 }

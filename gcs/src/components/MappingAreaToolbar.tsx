@@ -1,33 +1,5 @@
-import React, { useState } from 'react';
+import React from 'react';
 import './MappingAreaToolbar.css';
-
-function formatArea(areaM2: number): string {
-  if (areaM2 >= 10000) return `${(areaM2 / 10000).toFixed(2)} ha`;
-  return `${Math.round(areaM2).toLocaleString()} m²`;
-}
-
-/** Coverage geometry, mirroring nidar_mission_manager/path_planner.py so the
- * operator can see exactly how altitude + camera FOV drive the flight lines
- * (and why a given altitude yields the pattern it does) before pressing
- * Start. Kept in sync with that module's swath_width_m/ground_footprint_m. */
-export function coverageStats(altitudeM: number, areaM2: number, droneCount: number,
-                              hfovDeg = 60, imgW = 1280, imgH = 960, overlapPct = 20) {
-  const aspect = imgW / imgH;
-  const vfov = 2 * Math.atan(Math.tan((hfovDeg * Math.PI) / 180 / 2) / aspect);
-  const footprintLong = 2 * altitudeM * Math.tan((hfovDeg * Math.PI) / 180 / 2);
-  const footprintShort = 2 * altitudeM * Math.tan(vfov / 2);
-  const swath = footprintShort; // conservative: short edge, yaw-independent
-  const spacing = swath * (1 - overlapPct / 100);
-  const zoneArea = droneCount > 0 ? areaM2 / droneCount : areaM2;
-  const zoneSide = Math.sqrt(zoneArea);
-  const linesPerZone = spacing > 0 ? Math.max(1, Math.ceil(zoneSide / spacing)) : 0;
-  return {
-    vfovDeg: (vfov * 180) / Math.PI,
-    footprintLong, footprintShort, swath, spacing,
-    zoneArea, zoneSide, linesPerZone,
-    pathPerZone: linesPerZone * zoneSide + Math.max(0, linesPerZone - 1) * spacing,
-  };
-}
 
 interface MappingAreaToolbarProps {
   isDrawingBoundary: boolean;
@@ -44,6 +16,7 @@ interface MappingAreaToolbarProps {
   onToggleDrawBoundary: () => void;
   onToggleSetLaunchSite: () => void;
   onToggleSurvivorPlacement: () => void;
+  onGenerateRandomBoundary?: () => void;
   onRandomizeLaunchSite: () => void;
   onRandomizeDronePositions: () => void;
   onTogglePlaceDrone: (ns: string) => void;
@@ -60,14 +33,13 @@ export const MappingAreaToolbar: React.FC<MappingAreaToolbarProps> = ({
   drawnVertexCount,
   hasBoundary,
   boundaryAreaM2,
-  altitudeM,
-  droneCount,
   droneNamespaces,
   placingDroneNs,
   survivorCount,
   onToggleDrawBoundary,
   onToggleSetLaunchSite,
   onToggleSurvivorPlacement,
+  onGenerateRandomBoundary,
   onRandomizeLaunchSite,
   onRandomizeDronePositions,
   onTogglePlaceDrone,
@@ -76,153 +48,158 @@ export const MappingAreaToolbar: React.FC<MappingAreaToolbarProps> = ({
   onAddRandomSurvivors,
   onClearSurvivors,
 }) => {
-  const [randomCount, setRandomCount] = useState(5);
+  const formatArea = (m2: number) => {
+    if (m2 > 10000) return `${(m2 / 10000).toFixed(2)} ha`;
+    return `${Math.round(m2)} m²`;
+  };
 
   return (
-    <div className="mapping-toolbar">
-      {hasBoundary && (() => {
-        const cs = coverageStats(altitudeM, boundaryAreaM2, droneCount);
-        return (
-          <div className="mapping-toolbar__group mapping-toolbar__area-panel">
-            <span className="mapping-toolbar__area-label">📏 Mapping area</span>
-            <span className="mapping-toolbar__area-value">{formatArea(boundaryAreaM2)}</span>
-            <span className="mapping-toolbar__area-sep" />
-            <span
-              className="mapping-toolbar__area-label"
-              title={
-                `Camera 60° HFOV / ${cs.vfovDeg.toFixed(1)}° VFOV @ ${altitudeM}m\n` +
-                `Ground frame ${cs.footprintLong.toFixed(2)}m × ${cs.footprintShort.toFixed(2)}m ` +
-                `(${(cs.footprintLong * cs.footprintShort).toFixed(0)} m²)\n` +
-                `Swath ${cs.swath.toFixed(2)}m (short edge, yaw-independent), 20% overlap ` +
-                `→ line spacing ${cs.spacing.toFixed(2)}m\n` +
-                `Each of ${droneCount} zones ≈ ${cs.zoneArea.toFixed(0)} m² ` +
-                `(${cs.zoneSide.toFixed(1)}m square) → ${cs.linesPerZone} lines, ` +
-                `≈${cs.pathPerZone.toFixed(0)}m of flight`
-              }
-            >
-              🛰️ {cs.linesPerZone} lines/zone · swath {cs.swath.toFixed(1)}m · zone{' '}
-              {cs.zoneArea.toFixed(0)} m²
-            </span>
-          </div>
-        );
-      })()}
-      <div className="mapping-toolbar__group">
-        <button
-          className={`mapping-toolbar__btn ${isDrawingBoundary ? 'mapping-toolbar__btn--active' : ''}`}
-          onClick={onToggleDrawBoundary}
-          title="Click points on the map to create a custom mapping boundary"
-        >
-          {isDrawingBoundary ? '✏️ Drawing Boundary...' : '📐 Draw Mapping Area'}
-        </button>
-
-        {isDrawingBoundary && (
-          <span className="mapping-toolbar__info">
-            {drawnVertexCount < 3
-              ? `Click map to add points (${drawnVertexCount}/3 min)`
-              : `${drawnVertexCount} points added`}
+    <div className="mapping-toolbar-glass">
+      <div className="obsidian-card-header" style={{ marginBottom: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="icon" style={{ color: 'var(--primary-bright)' }}>
+            polyline
           </span>
-        )}
-
-        {drawnVertexCount > 0 && (
-          <button
-            className="mapping-toolbar__btn mapping-toolbar__btn--danger"
-            onClick={onClearBoundary}
-            title="Clear all drawn points"
-          >
-            🗑️ Clear
-          </button>
-        )}
+          <span>MISSION PLANNING SUITE</span>
+        </div>
+        <span className="obsidian-badge badge-primary">PRE-FLIGHT SETUP</span>
       </div>
 
-      <div className="mapping-toolbar__group">
-        <button
-          className={`mapping-toolbar__btn ${isSettingLaunchSite ? 'mapping-toolbar__btn--active' : ''}`}
-          onClick={onToggleSetLaunchSite}
-          title="Click anywhere on the map to set the Home Launching Site for the drones"
-        >
-          {isSettingLaunchSite ? '🎯 Placing Launch Site...' : '🚀 Set Launch Site'}
-        </button>
+      {/* 1. MAPPING AREA BOUNDARY TOOLS */}
+      <div className="toolbar-section-box">
+        <div className="toolbar-section-header">
+          <span>1. ARENA BOUNDARY SELECTION</span>
+          <span className="telemetry-val" style={{ color: 'var(--primary-bright)' }}>
+            {hasBoundary ? formatArea(boundaryAreaM2) : `${drawnVertexCount} PTS`}
+          </span>
+        </div>
 
-        {hasBoundary && (
+        <div className="toolbar-btn-row">
           <button
-            className="mapping-toolbar__btn mapping-toolbar__btn--secondary"
-            onClick={onRandomizeLaunchSite}
-            title="Randomly place the Launch Site inside the KML boundary"
+            className={`glow-btn glow-btn-cyan ${isDrawingBoundary ? 'active' : ''}`}
+            onClick={onToggleDrawBoundary}
           >
-            🎲 Randomize Launch Site
+            <span className="icon">{isDrawingBoundary ? 'check_circle' : 'draw'}</span>
+            {isDrawingBoundary ? `DONE (${drawnVertexCount} PTS)` : 'DRAW ARENA (MAP CLICK)'}
           </button>
-        )}
+        </div>
 
-        <button
-          className="mapping-toolbar__btn mapping-toolbar__btn--secondary"
-          onClick={onRandomizeDronePositions}
-          title="Randomly place all 4 drones inside the fixed 12ft x 12ft launch/landing box, with safe separation"
-        >
-          🎲 Randomize Drone Positions
-        </button>
-      </div>
+        <div className="toolbar-btn-row">
+          {onGenerateRandomBoundary && (
+            <button className="glow-btn glow-btn-cyan" onClick={onGenerateRandomBoundary}>
+              <span className="icon">shuffle</span>
+              GENERATE RANDOM ARENA
+            </button>
+          )}
 
-      <div className="mapping-toolbar__group mapping-toolbar__drone-place">
-        <span className="mapping-toolbar__area-label" title="Click a drone, then click inside the 12ft launch box on the map to place it">
-          🛩️ Place in box:
-        </span>
-        {droneNamespaces.map((ns, i) => (
-          <button
-            key={ns}
-            className={`mapping-toolbar__btn mapping-toolbar__btn--drone ${placingDroneNs === ns ? 'mapping-toolbar__btn--active' : ''}`}
-            onClick={() => onTogglePlaceDrone(ns)}
-            title={`Click here, then click inside the 12ft launch box to place ${ns}`}
-          >
-            {placingDroneNs === ns ? `🎯 ${ns}...` : `${i}`}
-          </button>
-        ))}
-        <button
-          className="mapping-toolbar__btn mapping-toolbar__btn--danger"
-          onClick={onResetDronePositions}
-          title="Clear all custom drone launch positions (revert to default formation)"
-        >
-          ↺ Reset
-        </button>
-      </div>
-
-      {hasBoundary && (
-        <div className="mapping-toolbar__group">
-          <button
-            className={`mapping-toolbar__btn mapping-toolbar__btn--survivor ${isPlacingSurvivor ? 'mapping-toolbar__btn--active-survivor' : ''}`}
-            onClick={onToggleSurvivorPlacement}
-            title="Click inside the boundary to place a survivor dummy"
-          >
-            {isPlacingSurvivor ? '🎯 Placing Survivor...' : '🧍 Place Survivor'}
-          </button>
-
-          <input
-            type="number"
-            min={1}
-            max={50}
-            className="mapping-toolbar__count-input"
-            value={randomCount}
-            onChange={(e) => setRandomCount(Math.max(1, Number(e.target.value) || 1))}
-            title="Number of random survivors to add"
-          />
-          <button
-            className="mapping-toolbar__btn mapping-toolbar__btn--secondary"
-            onClick={() => onAddRandomSurvivors(randomCount)}
-            title="Randomly scatter survivors inside the boundary"
-          >
-            🎲 Add {randomCount} Random
-          </button>
-
-          {survivorCount > 0 && (
-            <button
-              className="mapping-toolbar__btn mapping-toolbar__btn--danger"
-              onClick={onClearSurvivors}
-              title="Remove all placed survivors"
-            >
-              🗑️ Clear Survivors ({survivorCount})
+          {(hasBoundary || drawnVertexCount > 0) && (
+            <button className="glow-btn" onClick={onClearBoundary} title="Clear Boundary">
+              <span className="icon">delete</span>
+              CLEAR
             </button>
           )}
         </div>
-      )}
+      </div>
+
+      {/* 2. LAUNCH & LANDING STATION (12ft x 12ft) */}
+      <div className="toolbar-section-box">
+        <div className="toolbar-section-header">
+          <span>2. LAUNCH & LANDING STATION</span>
+          <span className="obsidian-badge badge-success">FIXED 12 FT x 12 FT BOX</span>
+        </div>
+
+        <div className="launch-box-info-pill">
+          <span className="icon" style={{ fontSize: 16 }}>
+            crop_square
+          </span>
+          <span>All drones launch & land inside 12 ft x 12 ft (3.65m) landing zone</span>
+        </div>
+
+        <div className="toolbar-btn-row">
+          <button
+            className={`glow-btn glow-btn-green ${isSettingLaunchSite ? 'active' : ''}`}
+            onClick={onToggleSetLaunchSite}
+          >
+            <span className="icon">my_location</span>
+            {isSettingLaunchSite ? 'CLICK MAP FOR LAUNCH SITE' : 'SET LAUNCH SITE (CLICK)'}
+          </button>
+
+          <button className="glow-btn glow-btn-green" onClick={onRandomizeLaunchSite}>
+            <span className="icon">casino</span>
+            RANDOM LAUNCH SITE
+          </button>
+        </div>
+      </div>
+
+      {/* 3. DRONE FORMATION PLACEMENT (inside 12ft Box) */}
+      <div className="toolbar-section-box">
+        <div className="toolbar-section-header">
+          <span>3. DRONE LAUNCH FORMATION</span>
+          <span className="telemetry-val" style={{ color: 'var(--text-muted)' }}>
+            4 DRONES
+          </span>
+        </div>
+
+        <div className="toolbar-btn-row">
+          <button className="glow-btn glow-btn-green" onClick={onRandomizeDronePositions}>
+            <span className="icon">grid_view</span>
+            RANDOM DRONE FORMATION
+          </button>
+          <button className="glow-btn" onClick={onResetDronePositions}>
+            RESET
+          </button>
+        </div>
+
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+          PLACE INDIVIDUAL DRONE IN LAUNCH BOX:
+        </div>
+        <div className="toolbar-btn-row">
+          {droneNamespaces.map((ns) => {
+            const isPlacing = placingDroneNs === ns;
+            return (
+              <button
+                key={ns}
+                className={`glow-btn ${isPlacing ? 'active' : ''}`}
+                style={{ padding: '4px 6px', fontSize: 10 }}
+                onClick={() => onTogglePlaceDrone(ns)}
+              >
+                {ns.toUpperCase().replace('DRONE', 'D-')}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 4. SURVIVOR DUMMY SCATTER & PLACEMENT */}
+      <div className="toolbar-section-box">
+        <div className="toolbar-section-header">
+          <span>4. SURVIVOR DUMMIES</span>
+          <span className="telemetry-val" style={{ color: 'var(--status-warning)' }}>
+            {survivorCount} PLACED
+          </span>
+        </div>
+
+        <div className="toolbar-btn-row">
+          <button
+            className={`glow-btn glow-btn-amber ${isPlacingSurvivor ? 'active' : ''}`}
+            onClick={onToggleSurvivorPlacement}
+          >
+            <span className="icon">person_add</span>
+            {isPlacingSurvivor ? 'CLICK MAP TO DROP' : 'CLICK PLACE SURVIVOR'}
+          </button>
+
+          <button className="glow-btn glow-btn-amber" onClick={() => onAddRandomSurvivors(3)}>
+            <span className="icon">groups</span>
+            ADD 3 SURVIVORS
+          </button>
+
+          {survivorCount > 0 && (
+            <button className="glow-btn" onClick={onClearSurvivors} title="Clear Survivors">
+              CLEAR
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

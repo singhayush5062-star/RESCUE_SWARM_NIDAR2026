@@ -450,6 +450,146 @@ clock start/freeze/reset rules, phase accounting, duration formatting.
 
 ---
 
+## The trained model (2026-08-29): PERSON_DETECTION_MODEL_V3, on ncnn
+
+The placeholder stock weights are gone. `nidar_person.pt` is now YOLO26n
+fine-tuned on MANNEQUIN_PERSON_V3, single class `person`, trained at 640x640
+(its own validation: P 0.961, R 0.950, mAP50 0.974, mAP50-95 0.917).
+
+The difference against this simulator's nadir camera is not marginal:
+
+| weights | confidence on a sim survivor, top-down |
+|---|---|
+| stock COCO YOLO26n | 0.03 - 0.12 (even filling the frame) |
+| PERSON_DETECTION_MODEL_V3 | **0.76 - 0.97** |
+
+That closes the viewpoint gap this document previously recorded as the
+blocking issue for real detection.
+
+### ncnn is the CPU backend, and it is chosen automatically
+
+The model shipped as three exports of the same weights: `.pt`, `.onnx`, and
+an ncnn directory. They are not three models and nothing downstream should
+have to pick between them, so `detector.resolve_model_path()` does it by
+device. Measured on this box, live 640x480 sim frame, same weights:
+
+```
+.pt  on CUDA, imgsz 640 ....  13.2 ms   (76.0 FPS)
+.pt  on CPU,  imgsz 640 ...  379.4 ms   ( 2.6 FPS)
+.pt  on CPU,  imgsz 416 ...  213.2 ms   ( 4.7 FPS)
+ncnn on CPU,  imgsz 640 ...  122.2 ms   ( 8.2 FPS)
+```
+
+So: CUDA available -> load the `.pt` (9x faster than ncnn). CPU only -> load
+the ncnn export (3.1x faster than the `.pt`, at the SAME input size). The
+second row of that table is why the node previously cut CPU inference to
+imgsz 416; ncnn at full 640 beats that anyway, so `CPU_FALLBACK_INPUT_SIZE`
+is now applied only to the PyTorch backend and ncnn keeps the resolution the
+model was trained at.
+
+`model_path` remains the single swap point. `resolve_model_path()` looks for
+`<stem>_ncnn_model/` beside it, which is exactly what
+`yolo export format=ncnn` writes, so re-exporting retrained weights is enough
+to keep the fast path. A `.pt` with no ncnn export still works; it just runs
+slower and the node says so. `prefer_ncnn_on_cpu:=false` forces the literal
+path.
+
+Loading an ncnn export needs `pip install ncnn`. It is declared in
+`package.xml` but is not rosdep-resolvable.
+
+To exercise the ncnn path deliberately on a machine that HAS a GPU -- worth
+doing, since it is the backend the competition companion computer runs:
+
+```bash
+NIDAR_DETECTION_DEVICE=cpu ./scripts/run_simulation.sh
+```
+
+## The detection nodes had never once started from the launcher
+
+Every previous "detection verified" result in this document came from running
+the nodes by hand with an explicit `PYTHONPATH`. Launched the normal way,
+they failed:
+
+```
+Package 'nidar_detection' not found: "package 'nidar_detection' not found,
+searching: [... every other nidar package, but not this one ...]"
+```
+
+The package built cleanly, installed completely, appeared in `ros2 pkg list`,
+and had a correct ament index marker. It was simply absent from
+`AMENT_PREFIX_PATH`.
+
+Cause: `package.xml` contained a **doubled ASCII hyphen inside an XML
+comment** (in a comment explaining the `lap` dependency). That is illegal
+XML. Nothing anywhere reported it. colcon could not parse the manifest, so it
+identified the package as build type `python` instead of `ros.ament_python`
+-- visible only via `colcon list`:
+
+```
+nidar_detection      src/nidar_detection      (python)            <- wrong
+nidar_mission_clock  src/nidar_mission_clock  (ros.ament_python)  <- right
+```
+
+The `ament_python` build task is the only thing that adds the
+`ament_prefix_path` environment hook. No hook -> not on `AMENT_PREFIX_PATH`
+-> `ros2 launch` cannot find it. Comparing `install/*/share/*/package.dsv`
+between the two packages shows it directly: the working one sources three
+`ament_prefix_path.*` lines, the broken one sources none, despite the hook
+files existing on disk.
+
+Fixed by rewording the comment. `tests/test_package_manifest.py` now asserts
+every `nidar_*/package.xml` parses, declares a build type, and matches its
+directory name -- because the failure mode is silent everywhere else.
+
+Two secondary fixes fell out of this:
+
+* `run_simulation.sh` tested the model path with `-f`, which is false for an
+  ncnn export (a directory), and logged "model not found" while skipping
+  detection entirely. Now `-e`.
+* `NIDAR_DETECTION_DEVICE` is passed through to the launch file, so the ncnn
+  path can be selected without editing anything.
+
+## "drone2 failed to arm/offboard" was never an arming problem
+
+A mission aborted 30s after start with `[error] drone2 failed to arm/offboard`.
+Inspecting the still-running graph:
+
+* `/drone2/platform` process alive,
+* `/drone2/set_arming_state` and `/drone2/set_offboard_mode` both advertised,
+* but `ros2 topic echo /drone2/platform/info` received **nothing**, while
+  drone0/1/3 answered immediately, and
+* `ros2 topic info -v /drone2/platform/info` reported its publisher as
+  `_NODE_NAME_UNKNOWN_` / `_NODE_NAMESPACE_UNKNOWN_`.
+
+That is FastDDS half-discovery: the endpoint was announced but the
+participant never completed, so every service call into it hung until its own
+timeout. `_call_bounded`'s 3 attempts x 8s bound is exactly the 27s the
+mission spent before giving up.
+
+Nothing about `arm()` could have fixed that, so arming was the wrong thing to
+try. Two changes:
+
+1. **`_wait_platform_ready()` runs before arming.** `connected` in
+   as2_python_api's `PlatformInfoData` defaults to `False` and is only ever
+   set from a received `PlatformInfo` message, so it is a direct test of "has
+   any platform status reached our own subscription". A drone that fails it
+   now reports *"platform node is not reachable, no /droneN/platform/info
+   received in 10s"* immediately, instead of a generic arming failure 27s
+   later that sends the operator looking for a flight-control bug.
+2. **`_call_bounded` logs each attempt** with its elapsed time and which
+   shape of failure it was: a call that *returns* False fast is the service
+   answering no; a call still running at the timeout is the service never
+   having been reached. Those need completely different fixes and were
+   previously indistinguishable.
+
+The arm/offboard sequence was also duplicated verbatim in both mission entry
+points; it is now one `_arm_and_offboard()` so the two cannot drift.
+
+Worth knowing: the missing drone is **not stable across runs**. On the next
+clean launch it was drone0 that failed the first probe and answered normally
+seconds later -- which is why the gate polls for 10s rather than sampling
+once.
+
 ## Not done here
 
 - **Geotagging** (pixel → lat/lon). Phase 3. `projection.py` implements and

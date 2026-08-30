@@ -6,9 +6,12 @@ Whether YOLO itself finds a person is a model question, checked live against
 the simulator, not something a unit test can meaningfully assert.
 """
 
+import os
+
 import numpy as np
 import pytest
 
+from nidar_detection import detector as det
 from nidar_detection.detector import (
     UNTRACKED,
     PERSON_CLASS_ID,
@@ -222,3 +225,89 @@ def test_annotate_labels_the_track_id_when_there_is_one():
     untracked = annotate(frame, [Detection(0.9, 10, 10, 60, 60)])
     # Different labels are drawn, so the rendered pixels must differ.
     assert not np.array_equal(tracked, untracked)
+
+
+# --- backend selection -------------------------------------------------
+#
+# resolve_model_path decides which export of the same weights actually runs.
+# Getting it wrong is silent: the node loads *something*, detects *something*,
+# and the only symptom is that it is 3x slower than it needed to be -- which
+# looks exactly like a transport problem. Hence tests.
+
+
+def _make_ncnn_dir(root, stem='nidar_person'):
+    """Create a directory that looks like a real `yolo export format=ncnn`."""
+    d = os.path.join(root, stem + det.NCNN_MODEL_SUFFIX)
+    os.makedirs(d)
+    with open(os.path.join(d, 'model.ncnn.param'), 'w') as f:
+        f.write('7767517\n')
+    with open(os.path.join(d, 'model.ncnn.bin'), 'wb') as f:
+        f.write(b'\x00')
+    return d
+
+
+def test_is_ncnn_model_accepts_a_real_export(tmp_path):
+    assert det.is_ncnn_model(_make_ncnn_dir(str(tmp_path)))
+
+
+def test_is_ncnn_model_rejects_a_plain_file(tmp_path):
+    weights = tmp_path / 'nidar_person.pt'
+    weights.write_bytes(b'\x00')
+    assert not det.is_ncnn_model(str(weights))
+
+
+def test_is_ncnn_model_rejects_a_directory_without_param(tmp_path):
+    """A half-copied export must not be treated as loadable.
+
+    The point is where the failure surfaces: rejected here, the node keeps
+    the .pt and says so; accepted here, ultralytics fails deep in its loader
+    with a message that never names which model path was wrong.
+    """
+    d = tmp_path / 'nidar_person_ncnn_model'
+    d.mkdir()
+    (d / 'model.ncnn.bin').write_bytes(b'\x00')
+    assert not det.is_ncnn_model(str(d))
+
+
+def test_is_ncnn_model_rejects_empty_path():
+    assert not det.is_ncnn_model('')
+
+
+def test_resolve_model_path_prefers_ncnn_sibling_on_cpu(tmp_path):
+    weights = tmp_path / 'nidar_person.pt'
+    weights.write_bytes(b'\x00')
+    ncnn = _make_ncnn_dir(str(tmp_path))
+    assert det.resolve_model_path(str(weights), 'cpu') == ncnn
+
+
+def test_resolve_model_path_keeps_pt_on_gpu(tmp_path):
+    """The whole point of the ncnn swap is CPU speed; on CUDA the .pt is 9x
+    faster, so a GPU run must never be quietly downgraded to ncnn."""
+    weights = tmp_path / 'nidar_person.pt'
+    weights.write_bytes(b'\x00')
+    _make_ncnn_dir(str(tmp_path))
+    assert det.resolve_model_path(str(weights), '0') == str(weights)
+
+
+def test_resolve_model_path_respects_opt_out(tmp_path):
+    weights = tmp_path / 'nidar_person.pt'
+    weights.write_bytes(b'\x00')
+    _make_ncnn_dir(str(tmp_path))
+    assert det.resolve_model_path(
+        str(weights), 'cpu', prefer_ncnn_on_cpu=False) == str(weights)
+
+
+def test_resolve_model_path_without_sibling_is_unchanged(tmp_path):
+    """Retrained weights with no ncnn export yet must still load and run."""
+    weights = tmp_path / 'nidar_person.pt'
+    weights.write_bytes(b'\x00')
+    assert det.resolve_model_path(str(weights), 'cpu') == str(weights)
+
+
+def test_resolve_model_path_is_idempotent_on_an_ncnn_dir(tmp_path):
+    """The node resolves the path, then PersonDetector resolves it again.
+    A second pass must not append a second _ncnn_model suffix."""
+    ncnn = _make_ncnn_dir(str(tmp_path))
+    once = det.resolve_model_path(ncnn, 'cpu')
+    assert once == ncnn
+    assert det.resolve_model_path(once, 'cpu') == ncnn

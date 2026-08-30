@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { rosConnection } from './ros/RosConnection';
 import { useDroneTelemetry } from './ros/useDroneTelemetry';
 import { useMissionControl } from './ros/useMissionControl';
@@ -8,6 +8,7 @@ import { useMissionProgress } from './ros/useMissionProgress';
 import { useDetections } from './ros/useDetections';
 import { useDroneControl } from './ros/useDroneControl';
 import { useSurvivorControl } from './ros/useSurvivorControl';
+import { useMissionLog } from './ros/useMissionLog';
 import { MapView } from './components/MapView';
 import { DroneStatusPanel } from './components/DroneStatusPanel';
 import { MissionLoader } from './components/MissionLoader';
@@ -16,6 +17,10 @@ import { DetectionPanel } from './components/DetectionPanel';
 import { VideoPanel } from './components/VideoPanel';
 import { DroneControlPanel } from './components/DroneControlPanel';
 import { MappingAreaToolbar } from './components/MappingAreaToolbar';
+import { HeaderNavbar } from './components/HeaderNavbar';
+import { LogsConsolePanel } from './components/LogsConsolePanel';
+import { MissionSummaryModal } from './components/MissionSummaryModal';
+
 import {
   calculateCentroid,
   calculatePolygonAreaM2,
@@ -24,9 +29,13 @@ import {
   generateRandomDroneLaunchPositions,
   generateRandomLaunchSiteInKml,
   generateRandomPointsInPolygon,
+  generateRandomBoundaryArea,
 } from './mission/launchSiteManager';
-import type { ConnectionState } from './types/drone';
+
+import type { ConnectionState, DroneTelemetry } from './types/drone';
 import type { MissionFile } from './types/mission';
+import type { ActiveTab, ExecutionMode, LogEntry } from './types/gcs';
+
 import './App.css';
 
 const DRONE_NAMESPACES = ['drone0', 'drone1', 'drone2', 'drone3'];
@@ -44,21 +53,36 @@ function useRosbridgeState(): ConnectionState {
 
 function App() {
   const rosbridgeState = useRosbridgeState();
+
+  // Execution Mode: SIMULATION or HARDWARE
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('SIMULATION');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('CONTROL');
+
+  // ROS Hooks
   const drone0 = useDroneTelemetry(DRONE_NAMESPACES[0]);
   const drone1 = useDroneTelemetry(DRONE_NAMESPACES[1]);
   const drone2 = useDroneTelemetry(DRONE_NAMESPACES[2]);
   const drone3 = useDroneTelemetry(DRONE_NAMESPACES[3]);
-  const drones = [drone0, drone1, drone2, drone3];
+  const realDrones = [drone0, drone1, drone2, drone3];
 
   const { status, loadedMission, loadMission, startMission, updateMission } = useMissionControl();
   const missionProgress = useMissionProgress();
-  // Every drone's annotated feed, always subscribed. Opt-in meant a normal
-  // mission showed no video at all unless the operator went and enabled it.
   const detections = useDetections(DRONE_NAMESPACES, DRONE_NAMESPACES);
   const zones = useZoneAllocation(loadedMission);
   const plannedPaths = useMissionPlannedPaths(loadedMission);
   const droneControl = useDroneControl();
   const survivorControl = useSurvivorControl();
+  // Backend log stream (/gcs/log <- /rosout, filtered by nidar_gcs_bridge).
+  const missionLog = useMissionLog();
+  // Every drone-command reply the backend has sent, echoed into the console.
+  //
+  // DroneControlPanel renders these, but it only exists on the MANUAL tab --
+  // so a placement issued from the PLANNING toolbar failed with its
+  // explanation rendered nowhere at all. Measured case: four
+  // `set_launch_position: failed after 3 retries -- service never became
+  // available` replies arriving while the operator watched four drones not
+  // move, with no indication anything had gone wrong.
+  const seenControlStatus = useRef<Set<string>>(new Set());
 
   // Interactive Mapping & Launch Site States
   const [isDrawingBoundary, setIsDrawingBoundary] = useState(false);
@@ -67,7 +91,158 @@ function App() {
   const [placingDroneNs, setPlacingDroneNs] = useState<string | null>(null);
   const [drawnVertices, setDrawnVertices] = useState<[number, number][]>([]);
 
-  // When a new point is clicked while drawing boundary
+  // Logs & Summary Modal State
+  // Actions taken in THIS browser. The backend's own output arrives
+  // separately via useMissionLog and the two are merged for display -- the
+  // console previously showed only these, seeded with two hard-coded lines
+  // that described a startup that had not been verified to happen.
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+
+  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+  const [missionDuration, setMissionDuration] = useState(0);
+  const [missionOutcome, setMissionOutcome] = useState<'COMPLETE' | 'ABORTED' | 'ERROR'>('COMPLETE');
+
+  // Standalone Simulation Telemetry Generator
+  const [simDrones, setSimDrones] = useState<Record<string, { lat: number; lon: number; alt: number; heading: number; batt: number; speed: number }>>({
+    drone0: { lat: 28.682412, lon: 77.499734, alt: 0.0, heading: 0, batt: 98, speed: 0.0 },
+    drone1: { lat: 28.682420, lon: 77.499740, alt: 0.0, heading: 90, batt: 97, speed: 0.0 },
+    drone2: { lat: 28.682400, lon: 77.499720, alt: 0.0, heading: 180, batt: 99, speed: 0.0 },
+    drone3: { lat: 28.682390, lon: 77.499750, alt: 0.0, heading: 270, batt: 96, speed: 0.0 },
+  });
+
+  const currentStatusState = status?.state || 'idle';
+
+  // Echo drone-command replies into the console, failures loudest.
+  useEffect(() => {
+    for (const [ns, st] of Object.entries(droneControl.statusByDrone)) {
+      const key = `${ns}:${st.action}:${st.success}:${st.detail}`;
+      if (seenControlStatus.current.has(key)) continue;
+      seenControlStatus.current.add(key);
+      addLog(st.success ? 'CMD' : 'ERROR', ns,
+             `${st.action}: ${st.success ? 'ok' : `FAILED — ${st.detail}`}`);
+    }
+    // addLog is recreated each render but only ever appends; depending on it
+    // would re-run this on every log line and re-echo nothing (the seen-set
+    // guards that), so it is deliberately omitted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [droneControl.statusByDrone]);
+
+  // Surface the report when the mission actually ends. Previously the summary
+  // could only be opened by clicking ABORT, so a mission that ran to
+  // completion -- the normal case -- produced no report at all.
+  useEffect(() => {
+    if (currentStatusState === 'complete') {
+      setMissionOutcome('COMPLETE');
+      setIsSummaryModalOpen(true);
+    } else if (currentStatusState === 'error') {
+      setMissionOutcome('ERROR');
+      setIsSummaryModalOpen(true);
+    }
+  }, [currentStatusState]);
+
+  // Ticker for Simulation mode
+  useEffect(() => {
+    const timer = setInterval(() => {
+      // Only animate the mock when there is genuinely no backend. Running it
+      // alongside live telemetry burned CPU producing numbers nothing showed.
+      if (rosbridgeState !== 'connected') {
+        const isRunning = currentStatusState === 'running' || currentStatusState === 'taking_off';
+
+        setSimDrones((prev) => {
+          const next = { ...prev };
+          Object.keys(next).forEach((ns, idx) => {
+            const current = next[ns];
+            if (isRunning) {
+              const speed = 2.2;
+              const angle = (Date.now() / 1000 + idx * 1.5) % (2 * Math.PI);
+              const dLat = Math.cos(angle) * 0.00002;
+              const dLon = Math.sin(angle) * 0.00002;
+
+              next[ns] = {
+                ...current,
+                lat: current.lat + dLat,
+                lon: current.lon + dLon,
+                alt: Math.min(25.0, current.alt + 0.5),
+                heading: (angle * 180 / Math.PI + 360) % 360,
+                batt: Math.max(10, current.batt - 0.01),
+                speed: speed,
+              };
+            } else {
+              next[ns] = {
+                ...current,
+                speed: 0.0,
+                alt: Math.max(0.0, current.alt - 0.5),
+              };
+            }
+          });
+          return next;
+        });
+
+        if (isRunning) {
+          setMissionDuration((d) => d + 1);
+        }
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [executionMode, rosbridgeState, currentStatusState]);
+
+  // Real telemetry wins in BOTH modes, whenever it is actually arriving.
+  //
+  // This used to require executionMode === 'HARDWARE', which meant the map
+  // and status panel showed the synthetic ticker below even while Gazebo was
+  // publishing genuine GPS at 20 Hz -- verified live: 4/4 drones on
+  // /droneN/sensor_measurements/gps, none of it reaching the screen. The
+  // mode switch is about which *vehicles* are flying (simulated vs real
+  // hardware); it is not a reason to discard telemetry. The simulator IS the
+  // ROS backend, so its fixes are real telemetry.
+  //
+  // The synthetic drones remain only as an offline demo, for showing the
+  // layout with no rosbridge at all -- and they now report connected:false,
+  // so nothing renders them as a healthy drone.
+  const effectiveDrones: DroneTelemetry[] = DRONE_NAMESPACES.map((ns, idx) => {
+    const real = realDrones[idx];
+    // `real.gps`, not `real.connected`. A drone whose telemetry has gone
+    // stale is still a real drone at a real last-known position, and that
+    // position is the single most useful thing to show an operator who has
+    // just lost it. Keying on `connected` sent it back to the mock's fixed
+    // start coordinate instead -- a drone that had flown 55 m away would
+    // appear to teleport home the moment its feed hiccuped. MapView already
+    // renders `connected: false` with the disconnected marker.
+    if (real.gps) {
+      return real;
+    }
+    const sim = simDrones[ns] || { lat: 28.682412, lon: 77.499734, alt: 0, heading: 0, batt: 100, speed: 0 };
+    return {
+      namespace: ns,
+      connected: false,
+      gps: { lat: sim.lat, lon: sim.lon, alt: sim.alt, stamp: Date.now() },
+      battery: { percentage: sim.batt, voltage: 16.2 },
+      lastUpdate: Date.now(),
+    };
+  });
+
+  // Backend lines plus this browser's own actions, oldest first, so a CMD the
+  // operator issued sits next to the backend's response to it. Ordered by the
+  // numeric sortKey -- see LogEntry, the displayed timestamp is unsortable.
+  const consoleLines: LogEntry[] = [...missionLog.entries, ...logs].sort(
+    (a, b) => a.sortKey - b.sortKey);
+
+  const addLog = (level: 'INFO' | 'WARN' | 'ERROR' | 'CMD', source: string, message: string) => {
+    setLogs((prev) => [
+      ...prev,
+      {
+        id: Math.random().toString(36).substring(2, 9),
+        timestamp: new Date().toLocaleTimeString(),
+        sortKey: Date.now(),
+        level,
+        source,
+        message,
+      },
+    ]);
+  };
+
+  // Interactive Boundary Handlers
   function handleAddVertex(lat: number, lon: number) {
     const nextVertices = [...drawnVertices, [lat, lon] as [number, number]];
     setDrawnVertices(nextVertices);
@@ -77,39 +252,51 @@ function App() {
       const newMission: MissionFile = createMissionFromLaunchSiteAndBoundary(
         nextVertices,
         home,
-        'Custom Drawn Mapping Area',
+        'Custom Mapping Area',
         loadedMission?.altitude_m ?? 25,
         loadedMission?.speed_mps ?? 2.0,
       );
       loadMission(newMission);
+      addLog('INFO', 'GCS', `Drawn boundary updated with ${nextVertices.length} vertices.`);
     }
   }
 
-  // When a point is clicked to set the Home Launch Site
+  function handleGenerateRandomBoundary() {
+    const center = loadedMission?.home || [28.682412, 77.499734];
+    const boundary = generateRandomBoundaryArea(center, 70);
+    setDrawnVertices(boundary);
+    const newMission: MissionFile = createMissionFromLaunchSiteAndBoundary(
+      boundary,
+      center,
+      'Random Search Arena',
+      loadedMission?.altitude_m ?? 25,
+      loadedMission?.speed_mps ?? 2.0,
+    );
+    loadMission(newMission);
+    addLog('INFO', 'GCS', 'Generated random arena mapping boundary polygon.');
+  }
+
+  // Home Launch Site Handler (12ft x 12ft Launch/Landing Station)
   function handleSetLaunchSite(lat: number, lon: number) {
     const boundary = loadedMission?.boundary || drawnVertices;
     const newMission: MissionFile = createMissionFromLaunchSiteAndBoundary(
       boundary.length >= 3 ? boundary : [[lat - 0.001, lon - 0.001], [lat + 0.001, lon - 0.001], [lat + 0.001, lon + 0.001], [lat - 0.001, lon + 0.001]],
       [lat, lon],
-      loadedMission?.mission_name || 'Mapping Mission',
+      loadedMission?.mission_name || 'Swarm Mission',
       loadedMission?.altitude_m ?? 25,
       loadedMission?.speed_mps ?? 2.0,
     );
     loadMission(newMission);
     setIsSettingLaunchSite(false);
-    // Moving the launch site must move the drones with it, immediately.
-    // createMissionFromLaunchSiteAndBoundary builds a fresh mission and so
-    // drops any drone_launch_positions that were set for the OLD box -- and
-    // those coordinates would in any case sit outside the new one. Placing
-    // the default formation around the new centre keeps the drones inside
-    // the 12ft box and gives visible confirmation the launch site took.
+
     const formation = defaultDroneLaunchPositions([lat, lon], DRONE_NAMESPACES);
     updateMission({ drone_launch_positions: formation });
     Object.entries(formation).forEach(([ns, [dLat, dLon]]) =>
       droneControl.setLaunchPosition(ns, dLat, dLon));
+
+    addLog('CMD', 'GCS', `Launch & Landing Station relocated to Lat: ${lat.toFixed(6)}, Lon: ${lon.toFixed(6)}.`);
   }
 
-  // Randomly place launch site inside active boundary
   function handleRandomizeLaunchSite() {
     const boundary = loadedMission?.boundary || drawnVertices;
     if (!boundary || boundary.length < 3) return;
@@ -118,7 +305,6 @@ function App() {
     handleSetLaunchSite(randomHome[0], randomHome[1]);
   }
 
-  // Click-to-place a single drone inside the 12ft launch box
   function handleTogglePlaceDrone(ns: string) {
     setPlacingDroneNs((prev) => (prev === ns ? null : ns));
     setIsDrawingBoundary(false);
@@ -133,10 +319,9 @@ function App() {
         [ns]: [lat, lon] as [number, number],
       },
     });
-    // Move it in the simulator now, not just in the mission file -- otherwise
-    // nothing visibly happens until Start is pressed.
     droneControl.setLaunchPosition(ns, lat, lon);
     setPlacingDroneNs(null);
+    addLog('CMD', 'GCS', `Placed ${ns} inside 12ft launch box at Lat: ${lat.toFixed(6)}, Lon: ${lon.toFixed(6)}.`);
   }
 
   function handleResetDronePositions() {
@@ -144,8 +329,6 @@ function App() {
     setPlacingDroneNs(null);
   }
 
-  // Randomly place all 4 drones inside the fixed 12ft x 12ft launch box
-  // centered on the current launch site, with safe separation.
   function handleRandomizeDronePositions() {
     const center = loadedMission?.home;
     if (!center) return;
@@ -160,102 +343,247 @@ function App() {
     setIsDrawingBoundary(false);
   }
 
-  // Scatter `count` random survivors inside the active boundary
   function handleAddRandomSurvivors(count: number) {
     const boundary = loadedMission?.boundary || drawnVertices;
     if (!boundary || boundary.length < 3) return;
     const points = generateRandomPointsInPolygon(boundary, count);
     points.forEach(([lat, lon]) => survivorControl.addSurvivor(lat, lon));
+    addLog('INFO', 'SwarmManager', `Placed ${count} simulated survivors in search grid.`);
   }
+
+  const handleStartMissionClick = () => {
+    startMission();
+    addLog('CMD', 'GCS', `Swarm mission launch sequence initiated in ${executionMode} mode.`);
+  };
+
+  // RECALL / ABORT handlers deliberately absent. They previously wrote a log
+  // line claiming "RTL signal broadcast" and "Emergency landing commanded"
+  // while publishing nothing at all -- a log entry asserting a command that
+  // was never sent is worse than silence. HeaderNavbar disables both buttons
+  // while no handler is supplied; restore them here once nidar_mission_executor
+  // accepts 'rtl' and 'abort' on /nidar/drone_command.
 
   return (
     <div className="gcs-layout">
-      <header className="gcs-header">NIDAR RescueSwarm — Ground Control Station</header>
+      {/* Obsidian Header Navigation Bar */}
+      <HeaderNavbar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        executionMode={executionMode}
+        onModeToggle={(mode) => {
+          setExecutionMode(mode);
+          addLog('INFO', 'GCS', `Execution mode switched to ${mode}.`);
+        }}
+        rosState={rosbridgeState}
+        missionStatusState={currentStatusState}
+        detectedCount={detections.total}
+        placedSurvivorCount={Object.keys(survivorControl.survivors).length}
+        onStartMission={handleStartMissionClick}
+      />
+
       <div className="gcs-body">
-        <div className="gcs-sidebar">
-          <MissionTimer progress={missionProgress} />
-          <MissionLoader
-            loadedMission={loadedMission}
-            status={status}
-            droneNamespaces={DRONE_NAMESPACES}
-            onLoad={loadMission}
-            onStart={startMission}
-            onMissionChange={updateMission}
-          />
-          <DroneControlPanel
-            droneNamespaces={DRONE_NAMESPACES}
-            control={droneControl}
-            altitudeM={loadedMission?.altitude_m ?? 25}
-          />
-          <DetectionPanel
-            droneNamespaces={DRONE_NAMESPACES}
-            byDrone={detections.byDrone}
-            total={detections.total}
-            observations={detections.observations}
-          />
-          <DroneStatusPanel drones={drones} rosbridgeState={rosbridgeState} />
-        </div>
-        <div className="gcs-map">
-          <MappingAreaToolbar
-            isDrawingBoundary={isDrawingBoundary}
-            isSettingLaunchSite={isSettingLaunchSite}
-            isPlacingSurvivor={isPlacingSurvivor}
-            drawnVertexCount={drawnVertices.length}
-            hasBoundary={!!(loadedMission?.boundary && loadedMission.boundary.length >= 3)}
-            boundaryAreaM2={loadedMission?.boundary ? calculatePolygonAreaM2(loadedMission.boundary) : 0}
-            altitudeM={loadedMission?.altitude_m ?? 25}
-            droneCount={DRONE_NAMESPACES.length}
-            droneNamespaces={DRONE_NAMESPACES}
-            placingDroneNs={placingDroneNs}
-            survivorCount={Object.keys(survivorControl.survivors).length}
-            onToggleDrawBoundary={() => {
-              setIsDrawingBoundary(!isDrawingBoundary);
-              if (isSettingLaunchSite) setIsSettingLaunchSite(false);
-              if (isPlacingSurvivor) setIsPlacingSurvivor(false);
-            }}
-            onToggleSetLaunchSite={() => {
-              setIsSettingLaunchSite(!isSettingLaunchSite);
-              if (isDrawingBoundary) setIsDrawingBoundary(false);
-              if (isPlacingSurvivor) setIsPlacingSurvivor(false);
-            }}
-            onToggleSurvivorPlacement={() => {
-              setIsPlacingSurvivor(!isPlacingSurvivor);
-              if (isDrawingBoundary) setIsDrawingBoundary(false);
-              if (isSettingLaunchSite) setIsSettingLaunchSite(false);
-            }}
-            onRandomizeLaunchSite={handleRandomizeLaunchSite}
-            onRandomizeDronePositions={handleRandomizeDronePositions}
-            onTogglePlaceDrone={handleTogglePlaceDrone}
-            onResetDronePositions={handleResetDronePositions}
-            onClearBoundary={handleClearBoundary}
-            onAddRandomSurvivors={handleAddRandomSurvivors}
-            onClearSurvivors={survivorControl.clearSurvivors}
-          />
-          <MapView
-            drones={drones}
-            mission={loadedMission}
-            zones={zones}
-            plannedPaths={plannedPaths}
-            isDrawingBoundary={isDrawingBoundary}
-            isSettingLaunchSite={isSettingLaunchSite}
-            isPlacingSurvivor={isPlacingSurvivor}
-            drawnVertices={drawnVertices}
-            survivors={survivorControl.survivors}
-            onAddVertex={handleAddVertex}
-            onSetLaunchSite={handleSetLaunchSite}
-            onAddSurvivor={survivorControl.addSurvivor}
-            placingDroneNs={placingDroneNs}
-            onPlaceDrone={handlePlaceDrone}
-          />
-        </div>
-        <VideoPanel
-          droneNamespaces={DRONE_NAMESPACES}
-          frames={detections.frames}
-          byDrone={detections.byDrone}
-          total={detections.total}
-          observations={detections.observations}
-        />
+        {/* TAB 1: MISSION CONTROL */}
+        {activeTab === 'CONTROL' && (
+          <>
+            <div className="gcs-sidebar">
+              <MissionTimer progress={missionProgress} />
+              <MissionLoader
+                loadedMission={loadedMission}
+                status={status}
+                droneNamespaces={DRONE_NAMESPACES}
+                onLoad={loadMission}
+                onStart={startMission}
+                onMissionChange={updateMission}
+              />
+              <DetectionPanel
+                droneNamespaces={DRONE_NAMESPACES}
+                byDrone={detections.byDrone}
+                total={detections.total}
+                observations={detections.observations}
+              />
+              <DroneStatusPanel
+                drones={effectiveDrones}
+                rosbridgeState={rosbridgeState}
+                executionMode={executionMode}
+              />
+            </div>
+            <div className="gcs-main-content">
+              <div className="gcs-map-container">
+                <MapView
+                  drones={effectiveDrones}
+                  mission={loadedMission}
+                  zones={zones}
+                  plannedPaths={plannedPaths}
+                  isDrawingBoundary={isDrawingBoundary}
+                  isSettingLaunchSite={isSettingLaunchSite}
+                  isPlacingSurvivor={isPlacingSurvivor}
+                  drawnVertices={drawnVertices}
+                  survivors={survivorControl.survivors}
+                  onAddVertex={handleAddVertex}
+                  onSetLaunchSite={handleSetLaunchSite}
+                  onAddSurvivor={survivorControl.addSurvivor}
+                  placingDroneNs={placingDroneNs}
+                  onPlaceDrone={handlePlaceDrone}
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* TAB 2: MISSION PLANNING */}
+        {activeTab === 'PLANNING' && (
+          <>
+            <div className="gcs-sidebar">
+              <MappingAreaToolbar
+                isDrawingBoundary={isDrawingBoundary}
+                isSettingLaunchSite={isSettingLaunchSite}
+                isPlacingSurvivor={isPlacingSurvivor}
+                drawnVertexCount={drawnVertices.length}
+                hasBoundary={!!(loadedMission?.boundary && loadedMission.boundary.length >= 3)}
+                boundaryAreaM2={loadedMission?.boundary ? calculatePolygonAreaM2(loadedMission.boundary) : 0}
+                altitudeM={loadedMission?.altitude_m ?? 25}
+                droneCount={DRONE_NAMESPACES.length}
+                droneNamespaces={DRONE_NAMESPACES}
+                placingDroneNs={placingDroneNs}
+                survivorCount={Object.keys(survivorControl.survivors).length}
+                onToggleDrawBoundary={() => {
+                  setIsDrawingBoundary(!isDrawingBoundary);
+                  if (isSettingLaunchSite) setIsSettingLaunchSite(false);
+                  if (isPlacingSurvivor) setIsPlacingSurvivor(false);
+                }}
+                onToggleSetLaunchSite={() => {
+                  setIsSettingLaunchSite(!isSettingLaunchSite);
+                  if (isDrawingBoundary) setIsDrawingBoundary(false);
+                  if (isPlacingSurvivor) setIsPlacingSurvivor(false);
+                }}
+                onToggleSurvivorPlacement={() => {
+                  setIsPlacingSurvivor(!isPlacingSurvivor);
+                  if (isDrawingBoundary) setIsDrawingBoundary(false);
+                  if (isSettingLaunchSite) setIsSettingLaunchSite(false);
+                }}
+                onGenerateRandomBoundary={handleGenerateRandomBoundary}
+                onRandomizeLaunchSite={handleRandomizeLaunchSite}
+                onRandomizeDronePositions={handleRandomizeDronePositions}
+                onTogglePlaceDrone={handleTogglePlaceDrone}
+                onResetDronePositions={handleResetDronePositions}
+                onClearBoundary={handleClearBoundary}
+                onAddRandomSurvivors={handleAddRandomSurvivors}
+                onClearSurvivors={survivorControl.clearSurvivors}
+              />
+              <MissionLoader
+                loadedMission={loadedMission}
+                status={status}
+                droneNamespaces={DRONE_NAMESPACES}
+                onLoad={loadMission}
+                onStart={startMission}
+                onMissionChange={updateMission}
+              />
+            </div>
+            <div className="gcs-main-content">
+              <div className="gcs-map-container">
+                <MapView
+                  drones={effectiveDrones}
+                  mission={loadedMission}
+                  zones={zones}
+                  plannedPaths={plannedPaths}
+                  isDrawingBoundary={isDrawingBoundary}
+                  isSettingLaunchSite={isSettingLaunchSite}
+                  isPlacingSurvivor={isPlacingSurvivor}
+                  drawnVertices={drawnVertices}
+                  survivors={survivorControl.survivors}
+                  onAddVertex={handleAddVertex}
+                  onSetLaunchSite={handleSetLaunchSite}
+                  onAddSurvivor={survivorControl.addSurvivor}
+                  placingDroneNs={placingDroneNs}
+                  onPlaceDrone={handlePlaceDrone}
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* TAB 3: MANUAL FLIGHT OPS */}
+        {activeTab === 'MANUAL' && (
+          <>
+            <div className="gcs-sidebar">
+              <DroneControlPanel
+                droneNamespaces={DRONE_NAMESPACES}
+                control={droneControl}
+                altitudeM={loadedMission?.altitude_m ?? 25}
+                executionMode={executionMode}
+              />
+            </div>
+            <div className="gcs-main-content">
+              <div className="gcs-map-container">
+                <MapView
+                  drones={effectiveDrones}
+                  mission={loadedMission}
+                  zones={zones}
+                  plannedPaths={plannedPaths}
+                  isDrawingBoundary={isDrawingBoundary}
+                  isSettingLaunchSite={isSettingLaunchSite}
+                  isPlacingSurvivor={isPlacingSurvivor}
+                  drawnVertices={drawnVertices}
+                  survivors={survivorControl.survivors}
+                  onAddVertex={handleAddVertex}
+                  onSetLaunchSite={handleSetLaunchSite}
+                  onAddSurvivor={survivorControl.addSurvivor}
+                  placingDroneNs={placingDroneNs}
+                  onPlaceDrone={handlePlaceDrone}
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* TAB 4: VIDEO FEEDS & DETECTIONS */}
+        {activeTab === 'VIDEO' && (
+          <div className="gcs-main-content">
+            <VideoPanel
+              droneNamespaces={DRONE_NAMESPACES}
+              frames={detections.frames}
+              byDrone={detections.byDrone}
+              total={detections.total}
+              observations={detections.observations}
+              executionMode={executionMode}
+              drones={effectiveDrones}
+            />
+          </div>
+        )}
+
+        {/* TAB 5: CONSOLE LOGS & DIAGNOSTICS */}
+        {activeTab === 'LOGS' && (
+          <div className="gcs-main-content">
+            <LogsConsolePanel
+              logs={consoleLines}
+              onClearLogs={() => {
+                setLogs([]);
+                missionLog.clear();
+              }}
+              droneNamespaces={DRONE_NAMESPACES}
+            />
+          </div>
+        )}
       </div>
+
+      {/* Mission Complete Summary Overlay */}
+      <MissionSummaryModal
+        isOpen={isSummaryModalOpen}
+        onClose={() => setIsSummaryModalOpen(false)}
+        missionName={loadedMission?.mission_name || 'Swarm Search Mission'}
+        // The backend's own monotonic mission clock, not a browser interval.
+        // The local counter this used to read kept ticking through pauses and
+        // never reset, so the "mission duration" in an exported report was
+        // whatever the tab had been open for.
+        durationSeconds={missionProgress?.elapsed_time_sec ?? missionDuration}
+        areaM2={loadedMission?.boundary ? calculatePolygonAreaM2(loadedMission.boundary) : 0}
+        // People actually found (distinct ByteTrack ids), not survivors the
+        // operator placed in the sim. The `|| 2` fallback that used to be here
+        // meant an empty mission still reported two rescues.
+        survivorsCount={detections.total}
+        droneCount={DRONE_NAMESPACES.length}
+        outcome={missionOutcome}
+      />
     </div>
   );
 }

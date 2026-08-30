@@ -3,40 +3,54 @@
   flex-direction: column;
   height: 100vh;
   width: 100vw;
-}
-
-.gcs-header {
-  background: #0a0d12;
-  color: #e6e9ef;
-  padding: 12px 20px;
-  font-weight: 600;
-  font-size: 15px;
-  letter-spacing: 0.02em;
-  border-bottom: 1px solid #262c36;
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  overflow: hidden;
 }
 
 .gcs-body {
   flex: 1;
   display: flex;
   min-height: 0;
+  overflow: hidden;
+  position: relative;
 }
 
 .gcs-sidebar {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  width: 280px;
+  gap: 12px;
+  width: 320px;
   flex-shrink: 0;
-  padding: 16px;
+  padding: 12px;
   box-sizing: border-box;
-  background: #12161c;
-  color: #e6e9ef;
+  background: var(--surface-container-low);
+  border-right: 1px solid var(--border-dark);
+  color: var(--text-main);
   overflow-y: auto;
 }
 
-.gcs-map {
+.gcs-main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.gcs-map-container {
   flex: 1;
   position: relative;
+  min-height: 0;
+}
+
+.gcs-bottom-bar {
+  height: 180px;
+  background-color: var(--surface-container-lowest);
+  border-top: 1px solid var(--border-dark);
+  display: flex;
+  flex-shrink: 0;
 }
 
 .marker-disconnected {

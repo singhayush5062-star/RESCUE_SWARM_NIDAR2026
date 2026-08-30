@@ -36,9 +36,18 @@ DEFAULT_CAMERA_TOPIC = 'sensor_measurements/gimbal/camera/image_raw'
 #: The single weights path the whole system loads. Swapping detection models
 #: -- including dropping in retrained overhead-person weights -- is a copy
 #: over this file, with no code, config, or launch change; ultralytics
-#: dispatches on the extension, so .pt / .onnx / .engine all work here. See
+#: dispatches on what it points at, so .pt / .onnx / .engine / a
+#: *_ncnn_model/ directory all work here. See
 #: project_gazebo/models/detection/README.md.
 DEFAULT_MODEL_PATH = '/home/ayush/NIDAR/project_gazebo/models/detection/nidar_person.pt'
+
+#: Inference input size to fall back to when a PyTorch model has to run on
+#: CPU. Cost scales with the square of it, so 640 -> 416 is ~2.4x cheaper.
+#: Deliberately NOT applied to the ncnn backend: measured on this box, ncnn
+#: at the full 640 (122 ms) is still faster than PyTorch cut to 416 (213 ms),
+#: so degrading ncnn's input would give up accuracy the model was trained
+#: with and buy nothing.
+CPU_FALLBACK_INPUT_SIZE = 416
 
 
 class DetectionNode(Node):
@@ -67,6 +76,10 @@ class DetectionNode(Node):
         # the same survivor is not counted once per frame. Empty string
         # disables tracking and reverts to plain per-frame detection.
         self.declare_parameter('tracker', 'bytetrack.yaml')
+        # When inference lands on CPU and an ncnn export sits beside the
+        # weights, load that instead -- 3x faster for the same output. Set
+        # false to force the literal model_path regardless of device.
+        self.declare_parameter('prefer_ncnn_on_cpu', True)
 
         self.drone_id = self.get_parameter('drone_id').value
         model_path = self.get_parameter('model_path').value
@@ -90,14 +103,30 @@ class DetectionNode(Node):
         self._annotated_max_width = int(self.get_parameter('annotated_max_width').value)
         self._jpeg_quality = int(self.get_parameter('jpeg_quality').value)
 
+        # Work out where inference will actually run, and on which export,
+        # BEFORE constructing the detector -- because the answer decides the
+        # input size. Both helpers are pure functions of the path and device,
+        # so asking them here and letting PersonDetector ask them again is
+        # deterministic, not a second opinion that could disagree.
+        prefer_ncnn = bool(self.get_parameter('prefer_ncnn_on_cpu').value)
+        device = det.resolve_device(str(self.get_parameter('device').value))
+        resolved_path = det.resolve_model_path(model_path, device, prefer_ncnn)
+        on_ncnn = det.is_ncnn_model(resolved_path)
+
+        input_size = int(self.get_parameter('input_size').value)
+        if device == 'cpu' and not on_ncnn:
+            # PyTorch on CPU only: see CPU_FALLBACK_INPUT_SIZE.
+            input_size = min(input_size, CPU_FALLBACK_INPUT_SIZE)
+
         self._bridge = CvBridge()
         self._detector = det.PersonDetector(
             model_path=model_path,
             confidence_threshold=float(self.get_parameter('confidence_threshold').value),
             iou_threshold=float(self.get_parameter('nms_threshold').value),
-            input_size=int(self.get_parameter('input_size').value),
+            input_size=input_size,
             device=str(self.get_parameter('device').value),
             tracker=str(self.get_parameter('tracker').value),
+            prefer_ncnn_on_cpu=prefer_ncnn,
         )
 
         camera_topic = self.get_parameter('camera_topic').value or \
@@ -124,9 +153,32 @@ class DetectionNode(Node):
         # otherwise invisible in a headless sim.
         self.create_timer(10.0, self._log_heartbeat)
 
+        # Falling back to CPU is not a minor slowdown here: four YOLO models
+        # on CPU drove this machine to load average 65 and starved Gazebo's
+        # renderer and DDS along with it, so camera frames arrived every 4-6
+        # seconds instead of every 250 ms. That presents as "the video feed
+        # lags", with nothing in the detection logs obviously wrong -- so say
+        # it loudly, with the fix, rather than letting it look like a
+        # transport problem.
+        if self._detector.device == 'cpu' and self._detector.backend != 'ncnn':
+            self.get_logger().warn(
+                f'{self.drone_id}: running PyTorch inference on CPU, the slowest '
+                f'combination available (~380 ms/frame measured). With one detector '
+                f'per drone this will saturate the machine and lag the whole '
+                f'simulation. Two independent fixes, either of which is enough: '
+                f'(1) if this box has an NVIDIA GPU torch cannot currently reach, '
+                f'"CUDA unknown error" after a suspend is usually cleared by '
+                f'sudo rmmod nvidia_uvm && sudo modprobe nvidia_uvm; '
+                f'(2) export the weights to ncnn -- '
+                f'yolo export model={model_path} format=ncnn -- which writes '
+                f'{det.NCNN_MODEL_SUFFIX} beside them and is picked up automatically, '
+                f'3x faster at full resolution.')
+
         self.get_logger().info(
-            f'detection ready for {self.drone_id} | device={self._detector.device} '
-            f'| model={model_path} | {rate:g} Hz | conf>={self._detector.confidence_threshold} '
+            f'detection ready for {self.drone_id} | backend={self._detector.backend} '
+            f'| device={self._detector.device} | imgsz={self._detector.input_size} '
+            f'| model={self._detector.model_path} | {rate:g} Hz '
+            f'| conf>={self._detector.confidence_threshold} '
             f'| tracker={self._detector.tracker or "off"} '
             f'| camera={camera_topic}')
 

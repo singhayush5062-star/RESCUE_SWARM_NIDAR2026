@@ -8,7 +8,6 @@ import { generateDroneWaypointsAtLaunchSite, isPointInPolygon, launchBoxCorners 
 import 'leaflet/dist/leaflet.css';
 import './MapView.css';
 
-// Leaflet marker asset setup
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
@@ -30,7 +29,7 @@ const disconnectedIcon = new L.Icon({
   className: 'marker-disconnected',
 });
 
-const PLANNED_PATH_COLORS = ['#60a5fa', '#f472b6', '#fbbf24', '#a78bfa'];
+const PLANNED_PATH_COLORS = ['#00f3ff', '#f472b6', '#fbbf24', '#a78bfa'];
 
 interface MapViewProps {
   drones: DroneTelemetry[];
@@ -40,7 +39,6 @@ interface MapViewProps {
   isDrawingBoundary?: boolean;
   isSettingLaunchSite?: boolean;
   isPlacingSurvivor?: boolean;
-  /** Namespace of the drone currently being positioned by click, or null. */
   placingDroneNs?: string | null;
   drawnVertices?: [number, number][];
   survivors?: SurvivorList;
@@ -107,9 +105,6 @@ function MapClickHandler({
   useMapEvents({
     click(e) {
       if (placingDroneNs && onPlaceDrone) {
-        // Gate on the 12ft launch box here as well as in the backend, so
-        // the operator gets immediate feedback instead of a mission that
-        // only fails once they press Start.
         if (launchBox && !isPointInPolygon([e.latlng.lat, e.latlng.lng], launchBox)) {
           onDroneOutOfBox?.();
         } else {
@@ -149,13 +144,12 @@ export function MapView({
   onPlaceDrone,
   onDroneOutOfBox,
 }: MapViewProps) {
+  const [tileMode, setTileMode] = useState<'SATELLITE' | 'DARK_TACTICAL'>('SATELLITE');
+
   const withGps = drones.filter((d) => d.gps);
   const hasExplicitWaypoints = !!mission?.drones && Object.keys(mission.drones).length > 0;
   const pathsToRender = hasExplicitWaypoints ? mission!.drones! : plannedPaths;
 
-  // Preview drone launch positions: the GCS-configured ones actually applied
-  // by the backend (mission.drone_launch_positions) if set, else the default
-  // formation offsets around the launch site.
   const launchSite = mission?.home || DEFAULT_CENTER;
   const dronePreviews = generateDroneWaypointsAtLaunchSite(launchSite[0], launchSite[1]);
   const configuredLaunchPositions = mission?.drone_launch_positions;
@@ -178,167 +172,220 @@ export function MapView({
 
   return (
     <div className={`map-view-wrapper ${isPlacementModeActive ? 'map-view-wrapper--crosshair' : ''}`}>
+      {/* Tile Layer Mode Switcher Overlay */}
+      <div className="map-tile-switcher">
+        <button
+          className={`map-tile-btn ${tileMode === 'SATELLITE' ? 'active' : ''}`}
+          onClick={() => setTileMode('SATELLITE')}
+        >
+          <span className="icon" style={{ fontSize: 14 }}>
+            satellites
+          </span>
+          SATELLITE
+        </button>
+        <button
+          className={`map-tile-btn ${tileMode === 'DARK_TACTICAL' ? 'active' : ''}`}
+          onClick={() => setTileMode('DARK_TACTICAL')}
+        >
+          <span className="icon" style={{ fontSize: 14 }}>
+            dark_mode
+          </span>
+          DARK VECTOR
+        </button>
+      </div>
+
       {outOfBoundsWarning && (
         <div className="map-view-warning">⚠️ Outside the mapping boundary — click inside the blue polygon</div>
       )}
+
       <MapContainer center={DEFAULT_CENTER} zoom={18} style={{ height: '100%', width: '100%' }}>
-      <TileLayer
-        attribution='Imagery &copy; Esri &mdash; Esri, Maxar, Earthstar Geographics'
-        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-        maxNativeZoom={19}
-        maxZoom={22}
-      />
-      <FitToBounds drones={drones} mission={mission} />
-      <MapClickHandler
-        isDrawingBoundary={isDrawingBoundary}
-        isSettingLaunchSite={isSettingLaunchSite}
-        isPlacingSurvivor={isPlacingSurvivor}
-        placingDroneNs={placingDroneNs}
-        launchBox={launchBox}
-        onPlaceDrone={onPlaceDrone}
-        onDroneOutOfBox={onDroneOutOfBox}
-        boundary={mission?.boundary}
-        onAddVertex={onAddVertex}
-        onSetLaunchSite={onSetLaunchSite}
-        onAddSurvivor={onAddSurvivor}
-        onOutOfBounds={handleOutOfBounds}
-      />
+        {tileMode === 'SATELLITE' ? (
+          <TileLayer
+            attribution='Imagery &copy; Esri &mdash; Esri, Maxar, Earthstar Geographics'
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            maxNativeZoom={19}
+            maxZoom={22}
+          />
+        ) : (
+          <TileLayer
+            attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+            maxNativeZoom={19}
+            maxZoom={22}
+          />
+        )}
 
-      {/* Interactive Drawn Boundary Vertices & Polygon */}
-      {drawnVertices.length > 0 && (
-        <>
-          {drawnVertices.map((v, idx) => (
-            <CircleMarker
-              key={`vertex-${idx}`}
-              center={v}
-              radius={6}
-              pathOptions={{ color: '#f59e0b', fillColor: '#fbbf24', fillOpacity: 0.9, weight: 2 }}
-            >
-              <Popup>Boundary Vertex #{idx + 1}</Popup>
-            </CircleMarker>
-          ))}
+        <FitToBounds drones={drones} mission={mission} />
+        <MapClickHandler
+          isDrawingBoundary={isDrawingBoundary}
+          isSettingLaunchSite={isSettingLaunchSite}
+          isPlacingSurvivor={isPlacingSurvivor}
+          placingDroneNs={placingDroneNs}
+          launchBox={launchBox}
+          onPlaceDrone={onPlaceDrone}
+          onDroneOutOfBox={onDroneOutOfBox}
+          boundary={mission?.boundary}
+          onAddVertex={onAddVertex}
+          onSetLaunchSite={onSetLaunchSite}
+          onAddSurvivor={onAddSurvivor}
+          onOutOfBounds={handleOutOfBounds}
+        />
 
-          {drawnVertices.length >= 2 && (
-            <Polyline positions={drawnVertices} pathOptions={{ color: '#f59e0b', weight: 2, dashArray: '4 4' }} />
-          )}
-
-          {drawnVertices.length >= 3 && (
-            <Polygon positions={drawnVertices} pathOptions={{ color: '#f59e0b', weight: 2, fillOpacity: 0.15 }} />
-          )}
-        </>
-      )}
-
-      {/* Active Mission & Boundary */}
-      {mission && (
-        <>
-          {mission.boundary && mission.boundary.length >= 3 && (
-            <Polygon positions={mission.boundary} pathOptions={{ color: '#3b82f6', weight: 2, fillOpacity: 0.08 }} />
-          )}
-
-          {/* Launching Site Marker */}
-          <CircleMarker center={mission.home} radius={9} pathOptions={{ color: '#10b981', fillColor: '#34d399', fillOpacity: 0.9, weight: 3 }}>
-            <Popup>
-              <strong>🚀 Home Launching Site</strong>
-              <br />
-              Lat: {mission.home[0].toFixed(6)}
-              <br />
-              Lon: {mission.home[1].toFixed(6)}
-            </Popup>
-          </CircleMarker>
-
-          {/* Fixed 12ft x 12ft launch/landing box every drone must launch
-              from and land within (competition rule) -- the backend
-              validates and enforces this before teleporting any drone,
-              see mission_executor_node.py's LAUNCH_BOX_SIZE_M. */}
-          {launchBox && (
-            <Polygon
-              positions={launchBox}
-              pathOptions={{ color: '#34d399', weight: 1.5, dashArray: '4 4', fillOpacity: 0.05 }}
-            />
-          )}
-
-          {/* Auto-generated per-drone coverage zones */}
-          {Object.entries(zones).map(([ns, verts], i) => (
-            <Polygon
-              key={`zone-${ns}`}
-              positions={verts}
-              pathOptions={{ color: PLANNED_PATH_COLORS[i % PLANNED_PATH_COLORS.length], weight: 1, fillOpacity: 0.15 }}
-            />
-          ))}
-
-          {/* Flight paths */}
-          {Object.entries(pathsToRender).map(([ns, waypoints], i) => (
-            <Polyline
-              key={ns}
-              positions={waypoints}
-              pathOptions={{ color: PLANNED_PATH_COLORS[i % PLANNED_PATH_COLORS.length], weight: 2, dashArray: '6 6' }}
-            />
-          ))}
-        </>
-      )}
-
-      {/* Preview Drone Placement Markers when no active connected telemetry.
-          Prefer the GCS-configured positions actually applied by the
-          backend (mission.drone_launch_positions) over the default
-          formation offsets, so what's shown matches what Start will do. */}
-      {withGps.length === 0 &&
-        (configuredLaunchPositions
-          ? Object.entries(configuredLaunchPositions).map(([ns, pos], idx) => (
+        {/* Interactive Drawn Boundary Vertices & Polygon */}
+        {drawnVertices.length > 0 && (
+          <>
+            {drawnVertices.map((v, idx) => (
               <CircleMarker
-                key={`preview-${ns}`}
-                center={pos}
-                radius={5}
-                pathOptions={{ color: PLANNED_PATH_COLORS[idx % PLANNED_PATH_COLORS.length], fillOpacity: 0.7 }}
+                key={`vertex-${idx}`}
+                center={v}
+                radius={6}
+                pathOptions={{ color: '#00f3ff', fillColor: '#00f3ff', fillOpacity: 0.9, weight: 2 }}
               >
-                <Popup>Launch Position: {ns}</Popup>
+                <Popup>Boundary Vertex #{idx + 1}</Popup>
               </CircleMarker>
-            ))
-          : Object.entries(dronePreviews).map(([ns, waypoints], idx) => (
-              <CircleMarker
-                key={`preview-${ns}`}
-                center={waypoints[0]}
-                radius={5}
-                pathOptions={{ color: PLANNED_PATH_COLORS[idx % PLANNED_PATH_COLORS.length], fillOpacity: 0.7 }}
-              >
-                <Popup>Launch Position: {ns} (default)</Popup>
-              </CircleMarker>
-            )))}
+            ))}
 
-      {/* Live Connected Telemetry Markers */}
-      {withGps.map((drone) => (
-        <Marker
-          key={drone.namespace}
-          position={[drone.gps!.lat, drone.gps!.lon]}
-          icon={drone.connected ? connectedIcon : disconnectedIcon}
-        >
-          <Popup>
-            <strong>{drone.namespace}</strong>
-            <br />
-            {drone.connected ? 'Connected' : 'No recent telemetry'}
-            <br />
-            Alt: {drone.gps!.alt.toFixed(1)} m
-            {drone.battery && (
-              <>
+            {drawnVertices.length >= 2 && (
+              <Polyline positions={drawnVertices} pathOptions={{ color: '#00f3ff', weight: 2, dashArray: '4 4' }} />
+            )}
+
+            {drawnVertices.length >= 3 && (
+              <Polygon positions={drawnVertices} pathOptions={{ color: '#00f3ff', weight: 2, fillOpacity: 0.18 }} />
+            )}
+          </>
+        )}
+
+        {/* Active Mission & Boundary */}
+        {mission && (
+          <>
+            {mission.boundary && mission.boundary.length >= 3 && (
+              <Polygon positions={mission.boundary} pathOptions={{ color: '#7e14ff', weight: 2, fillOpacity: 0.12 }} />
+            )}
+
+            {/* Launching Site Marker */}
+            <CircleMarker center={mission.home} radius={10} pathOptions={{ color: '#22c55e', fillColor: '#22c55e', fillOpacity: 0.9, weight: 3 }}>
+              <Popup>
+                <strong style={{ color: '#22c55e' }}>🚀 HOME LAUNCH SITE</strong>
                 <br />
-                Battery: {drone.battery.percentage.toFixed(0)}%
+                Lat: {mission.home[0].toFixed(6)}
+                <br />
+                Lon: {mission.home[1].toFixed(6)}
+              </Popup>
+            </CircleMarker>
+
+            {/* Fixed 12ft x 12ft Launch & Landing Box */}
+            {launchBox && (
+              <>
+                <Polygon
+                  positions={launchBox}
+                  pathOptions={{
+                    color: '#22c55e',
+                    weight: 2,
+                    dashArray: '6 6',
+                    fillColor: '#22c55e',
+                    fillOpacity: 0.12,
+                  }}
+                >
+                  <Popup>
+                    <strong style={{ color: '#22c55e' }}>12 FT x 12 FT LAUNCH & LANDING ZONE</strong>
+                    <br />
+                    Dimensions: 12 ft x 12 ft (3.65m x 3.65m)
+                    <br />
+                    All swarm quadrotors must launch from & land within this box.
+                  </Popup>
+                </Polygon>
+
+                {/* Corner reticle markers on the 12ft launch box */}
+                {launchBox.map((corner, i) => (
+                  <CircleMarker
+                    key={`box-corner-${i}`}
+                    center={corner}
+                    radius={3}
+                    pathOptions={{ color: '#22c55e', fillColor: '#fff', fillOpacity: 1, weight: 1 }}
+                  />
+                ))}
               </>
             )}
-          </Popup>
-        </Marker>
-      ))}
 
-      {/* Survivor Dummies (runtime-spawned, no sim restart) */}
-      {Object.entries(survivors).map(([id, [lat, lon]]) => (
-        <CircleMarker
-          key={id}
-          center={[lat, lon]}
-          radius={7}
-          className="survivor-marker-pop"
-          pathOptions={{ color: '#ef4444', fillColor: '#f87171', fillOpacity: 0.9, weight: 2 }}
-        >
-          <Popup>🧍 Survivor: {id}</Popup>
-        </CircleMarker>
-      ))}
+            {/* Auto-generated per-drone coverage zones */}
+            {Object.entries(zones).map(([ns, verts], i) => (
+              <Polygon
+                key={`zone-${ns}`}
+                positions={verts}
+                pathOptions={{ color: PLANNED_PATH_COLORS[i % PLANNED_PATH_COLORS.length], weight: 1, fillOpacity: 0.15 }}
+              />
+            ))}
+
+            {/* Flight paths */}
+            {Object.entries(pathsToRender).map(([ns, waypoints], i) => (
+              <Polyline
+                key={ns}
+                positions={waypoints}
+                pathOptions={{ color: PLANNED_PATH_COLORS[i % PLANNED_PATH_COLORS.length], weight: 2, dashArray: '6 6' }}
+              />
+            ))}
+          </>
+        )}
+
+        {/* Preview Drone Placement Markers inside 12ft Launch Box */}
+        {withGps.length === 0 &&
+          (configuredLaunchPositions
+            ? Object.entries(configuredLaunchPositions).map(([ns, pos], idx) => (
+                <CircleMarker
+                  key={`preview-${ns}`}
+                  center={pos}
+                  radius={6}
+                  pathOptions={{ color: PLANNED_PATH_COLORS[idx % PLANNED_PATH_COLORS.length], fillColor: PLANNED_PATH_COLORS[idx % PLANNED_PATH_COLORS.length], fillOpacity: 0.9 }}
+                >
+                  <Popup>Launch Position: {ns} (12ft Box)</Popup>
+                </CircleMarker>
+              ))
+            : Object.entries(dronePreviews).map(([ns, waypoints], idx) => (
+                <CircleMarker
+                  key={`preview-${ns}`}
+                  center={waypoints[0]}
+                  radius={6}
+                  pathOptions={{ color: PLANNED_PATH_COLORS[idx % PLANNED_PATH_COLORS.length], fillColor: PLANNED_PATH_COLORS[idx % PLANNED_PATH_COLORS.length], fillOpacity: 0.9 }}
+                >
+                  <Popup>Launch Position: {ns} (Default 12ft Box)</Popup>
+                </CircleMarker>
+              )))}
+
+        {/* Live Telemetry Markers */}
+        {withGps.map((drone) => (
+          <Marker
+            key={drone.namespace}
+            position={[drone.gps!.lat, drone.gps!.lon]}
+            icon={drone.connected ? connectedIcon : disconnectedIcon}
+          >
+            <Popup>
+              <strong>{drone.namespace}</strong>
+              <br />
+              {drone.connected ? 'Connected' : 'No recent telemetry'}
+              <br />
+              Alt: {drone.gps!.alt.toFixed(1)} m
+              {drone.battery && (
+                <>
+                  <br />
+                  Battery: {drone.battery.percentage.toFixed(0)}%
+                </>
+              )}
+            </Popup>
+          </Marker>
+        ))}
+
+        {/* Survivor Dummies */}
+        {Object.entries(survivors).map(([id, [lat, lon]]) => (
+          <CircleMarker
+            key={id}
+            center={[lat, lon]}
+            radius={8}
+            className="survivor-marker-pop"
+            pathOptions={{ color: '#ef4444', fillColor: '#ff4d4d', fillOpacity: 0.9, weight: 2 }}
+          >
+            <Popup>🧍 Survivor Dummy #{id}</Popup>
+          </CircleMarker>
+        ))}
       </MapContainer>
     </div>
   );

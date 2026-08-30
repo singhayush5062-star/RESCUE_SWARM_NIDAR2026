@@ -42,6 +42,22 @@
     ros__parameters:
       follow_path_plugin_name: "follow_path_plugin_position"
       # follow_path_plugin_name: "follow_path_plugin_trajectory"
+      # How close the drone must get before a waypoint counts as reached.
+      #
+      # AS2's default is 0.2 m, and that is tighter than this airframe's
+      # pid_speed_controller can actually hold. Measured live, repeatedly:
+      # the drone settles 0.235 - 0.24 m from the waypoint and stays there --
+      # the controller keeps commanding ~0.24 m/s toward it and the position
+      # does not change. Because 0.24 > 0.20, FollowPath never marks the
+      # waypoint reached, reports RUNNING forever, and the mission hangs on
+      # its FIRST waypoint. Confirmed by measurement: waypoint at earth
+      # x=25.02, drone parked at x=24.78, for minutes.
+      #
+      # 0.5 m clears that steady-state error with margin and costs nothing
+      # in coverage quality: the camera footprint at scan altitude is about
+      # 9 m across, so a half-metre of waypoint slop is a rounding error
+      # against the 20% line overlap the path planner already applies.
+      follow_path_threshold: 0.5
 
   # Trajectory Generation Behavior
   TrajectoryGeneratorBehavior:

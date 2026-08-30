@@ -113,7 +113,8 @@ class MissionExecutor(Node):
     CALL_RETRY_BACKOFF_SEC = 1.5
 
     def _call_bounded(self, fn, timeout_sec: float = CALL_TIMEOUT_SEC,
-                       attempts: int = CALL_MAX_ATTEMPTS) -> bool:
+                       attempts: int = CALL_MAX_ATTEMPTS,
+                       label: str = '') -> bool:
         """Run a blocking AS2 call (drone.arm(), .offboard(), .takeoff(), ...)
         with a hard wall-clock bound, retrying on failure.
 
@@ -149,12 +150,29 @@ class MissionExecutor(Node):
 
             t = threading.Thread(target=_run, daemon=True)
             t.start()
+            started = time.monotonic()
             t.join(timeout=timeout_sec)
+            elapsed = time.monotonic() - started
             if not t.is_alive():
                 if 'error' in result:
                     raise result['error']
                 if result.get('value'):
                     return True
+            # Two failure shapes that need completely different fixes, and
+            # which were indistinguishable before this line existed. A call
+            # that RETURNS False fast is the service answering "no" (already
+            # armed, platform refused). A call still running at the timeout
+            # is the service never having been reached at all -- DDS
+            # discovery, i.e. a node problem, not a flight problem. Both
+            # used to surface as the same "failed to arm/offboard" 27s
+            # later, which is the whole reason drone2's failure took a live
+            # graph inspection to explain.
+            if label:
+                how = ('timed out (service never answered -- discovery)'
+                       if t.is_alive() else
+                       f'returned {result.get("value")!r}')
+                self.get_logger().warn(
+                    f'[{label}] attempt {attempt}/{attempts} {how} after {elapsed:.1f}s')
             if attempt < attempts:
                 time.sleep(self.CALL_RETRY_BACKOFF_SEC)
         return False
@@ -284,7 +302,156 @@ class MissionExecutor(Node):
             time.sleep(0.1)
         return False
 
+    #: How long to wait for a drone's platform node to prove it is actually
+    #: reachable before trying to arm it. Short on purpose: this is a topic
+    #: that publishes continuously at ~10 Hz, so a healthy drone satisfies it
+    #: almost immediately, and an unhealthy one is not going to recover
+    #: within any bound worth blocking a 4-drone launch for.
+    PLATFORM_READY_TIMEOUT_SEC = 10.0
+
+    def _wait_platform_ready(self, drone: DroneInterfaceGPS, ns: str) -> bool:
+        """Block until this drone's platform node is proven reachable.
+
+        `connected` in as2_python_api's PlatformInfoData defaults to False and
+        is only ever set from a received PlatformInfo message, so this is a
+        direct test of "has ANY platform status reached our own subscription",
+        not an opinion about the flight state.
+
+        Why this exists, from a real failure: a mission aborted with
+        "drone2 failed to arm/offboard" after 27 wasted seconds. Inspecting
+        the live graph showed drone2's platform process alive and
+        /drone2/set_arming_state advertised -- but `ros2 topic info -v
+        /drone2/platform/info` reported its publisher as
+        _NODE_NAME_UNKNOWN_/_NODE_NAMESPACE_UNKNOWN_ and `ros2 topic echo`
+        received nothing, while drone0/1/3 were fine. That is FastDDS
+        half-discovery: the endpoint was announced, the participant never
+        completed, and every service call into it hung until its own timeout.
+
+        Nothing about arm() can fix that, so arming was never the right thing
+        to try. Checking here turns a slow, misattributed failure into an
+        immediate one that names the actual broken component -- which is the
+        difference between an operator restarting the sim and an operator
+        looking for a flight-control bug that does not exist.
+        """
+        deadline = time.monotonic() + self.PLATFORM_READY_TIMEOUT_SEC
+        while time.monotonic() < deadline:
+            if drone.info.get('connected'):
+                return True
+            time.sleep(0.1)
+        return False
+
+    def _arm_and_offboard(self, ns: str, drone: DroneInterfaceGPS) -> bool:
+        """Bring one drone to armed + offboard, or report exactly what failed.
+
+        Shared by both mission entry points (explicit-waypoint missions and
+        boundary-coverage missions) so the two cannot drift apart in what
+        they check or what they report -- they previously carried identical
+        copies of this sequence.
+        """
+        if not self._wait_platform_ready(drone, ns):
+            self._publish_status(
+                'error',
+                f'{ns} platform node is not reachable -- no /{ns}/platform/info '
+                f'received in {self.PLATFORM_READY_TIMEOUT_SEC:g}s. The drone is not '
+                f'refusing to arm; its platform node never joined the DDS graph. '
+                f'Restart the simulation, and if it recurs check for stale '
+                f'/dev/shm/sem.fastrtps_* locks from killed processes.')
+            return False
+
+        # Skip a transition the drone has already made, and judge a failed
+        # call by the platform's ACTUAL state rather than its return value --
+        # the same principle _call_physical_action applies to takeoff.
+        #
+        # AS2's platform returns success=False when asked to enter a state it
+        # is already in. So a drone left armed and in offboard by an earlier
+        # manual arm from the GCS -- exactly what the drone control panel is
+        # for -- made the next mission Start fail with "failed to enter
+        # offboard" while the drone was, in fact, in offboard the whole time.
+        # Confirmed live: a mission aborted 10s after Start with drone0
+        # sitting healthy on the pad. Retrying could never fix it, because the
+        # second attempt hits the same guard.
+        for label, action, field in (('arm', drone.arm, 'armed'),
+                                     ('offboard', drone.offboard, 'offboard')):
+            if drone.info.get(field):
+                self.get_logger().info(f'[{ns} {label}] already {field}, skipping')
+                continue
+            if self._call_bounded(action, label=f'{ns} {label}'):
+                continue
+            # Call reported failure. Believe the platform, not the call.
+            if self._wait_state_field(drone, field, self.ARM_OFFBOARD_CONFIRM_TIMEOUT_SEC):
+                self.get_logger().warn(
+                    f'[{ns} {label}] call reported failure but platform reports '
+                    f'{field}=True -- accepting the platform state')
+                continue
+            self._publish_status('error', f'{ns} failed to {label}')
+            return False
+
+        if not self._wait_armed_offboard(drone):
+            self._publish_status('error', f'{ns} armed+offboard state never confirmed')
+            return False
+        return True
+
+    def _wait_state_field(self, drone: DroneInterfaceGPS, field: str,
+                          timeout_sec: float) -> bool:
+        """Poll one boolean off the drone's own PlatformInfo until it is True."""
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            if drone.info.get(field):
+                return True
+            time.sleep(0.1)
+        return False
+
     GPS_FIX_TIMEOUT_SEC = 5.0
+
+    #: How close the drone's own reported fix must get to the commanded
+    #: teleport target before we believe the move has landed. Well under the
+    #: 3.66 m launch box, comfortably above sim GPS jitter.
+    TELEPORT_SETTLE_TOLERANCE_M = 0.5
+    TELEPORT_SETTLE_TIMEOUT_SEC = 8.0
+
+    def _wait_teleport_settled(self, drone: DroneInterfaceGPS, ns: str,
+                                target_lat: float, target_lon: float) -> bool:
+        """Block until the drone's own GPS reports it at the teleported spot.
+
+        Gazebo's set_pose returns as soon as the *simulator* has moved the
+        model, but AS2's state estimator only catches up on its next fix.
+        Reading drone.position or drone.gps right after teleporting therefore
+        hands back the PRE-teleport pose, and nothing about that looks wrong:
+        it is a perfectly valid position, just the old one.
+
+        Two things silently break when that happens, and both were reported
+        live as "the drones launch and RTL spots are different":
+          * _launch_local is recorded at the stale pose, so return-to-launch
+            flies back to where the drone used to be, not where it took off.
+          * nearest-zone assignment runs on stale positions, so drones can be
+            handed the zone nearest their old spot.
+
+        Returns True once the reported fix is within
+        TELEPORT_SETTLE_TOLERANCE_M of the target. Returns False on timeout,
+        leaving the caller to decide -- a slow estimator is not by itself a
+        reason to abort a mission, but it must not pass silently.
+        """
+        deadline = time.time() + self.TELEPORT_SETTLE_TIMEOUT_SEC
+        last = None
+        while time.time() < deadline:
+            fix = drone.gps.pose if drone.gps else None
+            if fix and len(fix) >= 2 and all(math.isfinite(v) for v in fix[:2]):
+                # Equirectangular metres; distances here are a few metres at most.
+                dlat = (fix[0] - target_lat) * 111320.0
+                dlon = ((fix[1] - target_lon) * 111320.0
+                        * math.cos(math.radians(target_lat)))
+                last = math.hypot(dlat, dlon)
+                if last <= self.TELEPORT_SETTLE_TOLERANCE_M:
+                    self.get_logger().info(
+                        f'[{ns}] teleport settled {last:.2f}m from target')
+                    return True
+            time.sleep(0.1)
+        self.get_logger().warn(
+            f'[{ns}] teleport did not settle within '
+            f'{self.TELEPORT_SETTLE_TIMEOUT_SEC:.0f}s '
+            f'(last offset {last if last is None else round(last, 2)}m); '
+            f'launch position and RTL target may be stale')
+        return False
 
     def _wait_gps_fix(self, drone: DroneInterfaceGPS,
                        timeout_sec: float = GPS_FIX_TIMEOUT_SEC) -> Optional[tuple]:
@@ -319,6 +486,11 @@ class MissionExecutor(Node):
         half = LAUNCH_BOX_SIZE_M / 2.0
         return abs(dx) <= half and abs(dy) <= half
 
+    #: How long to wait for the ros_gz world bridge's set_pose service to
+    #: appear, and the wall-clock bound on the whole call around it.
+    SET_POSE_DISCOVERY_TIMEOUT_SEC = 12.0
+    SET_POSE_CALL_TIMEOUT_SEC = 20.0
+
     def _teleport_drone(self, ns: str, lat: float, lon: float) -> bool:
         """Move drone `ns` to (lat, lon) via as2_gazebo_assets' set_pose
         bridge, before it's armed. Uses the same blocking Client.call() +
@@ -333,12 +505,29 @@ class MissionExecutor(Node):
         req.pose = Pose(position=Point(x=x, y=y, z=TELEPORT_SPAWN_HEIGHT_M))
 
         def _call():
-            if not self.set_pose_client.wait_for_service(timeout_sec=3.0):
+            if not self.set_pose_client.wait_for_service(
+                    timeout_sec=self.SET_POSE_DISCOVERY_TIMEOUT_SEC):
+                self.get_logger().warn(
+                    f'[{ns}] /world/.../set_pose not discovered within '
+                    f'{self.SET_POSE_DISCOVERY_TIMEOUT_SEC:g}s')
                 return False
             result = self.set_pose_client.call(req)
             return bool(result and result.success)
 
-        return self._call_bounded(_call)
+        # Bounds well above _call_bounded's 8s default on purpose. This is a
+        # DISCOVERY wait, not a slow service: the ros_gz world bridge that
+        # owns set_pose takes tens of seconds to become visible to a
+        # freshly-started participant on a loaded 4-drone graph.
+        #
+        # Measured failure this caused: an operator who sets a launch station
+        # shortly after startup got "set_launch_position: failed after 3
+        # retries -- service never became available" on all four drones, and
+        # the drones simply did not move. The same action a minute later
+        # worked every time. 3s x 3 attempts was not a real attempt at
+        # reaching a service that had not finished announcing itself.
+        return self._call_bounded(
+            _call, timeout_sec=self.SET_POSE_CALL_TIMEOUT_SEC, attempts=3,
+            label=f'{ns} set_pose')
 
     def _resolve_drone_positions(self, mission: dict, interfaces: dict) -> Optional[dict]:
         """Apply any GCS-configured drone_launch_positions (teleporting each
@@ -365,6 +554,8 @@ class MissionExecutor(Node):
             if not self._teleport_drone(ns, pos[0], pos[1]):
                 self._publish_status('error', f'{ns} failed to move to its configured launch position')
                 return None
+            # Do not read any position until the estimator reflects the move.
+            self._wait_teleport_settled(interfaces[ns], ns, pos[0], pos[1])
 
         drone_positions = {}
         self._launch_local = {}
@@ -390,8 +581,7 @@ class MissionExecutor(Node):
 
     RTL_TIMEOUT_SEC = 120.0
 
-    def _compensate_gps_path(self, drone, ns: str, waypoints: list,
-                             plan_origin: tuple) -> list:
+    def _compensate_gps_path(self, drone, ns: str, waypoints: list) -> list:
         """Rewrite mission-frame GPS waypoints into the frame AS2 will
         actually interpret them in.
 
@@ -415,11 +605,25 @@ class MissionExecutor(Node):
         converted z and uses the raw waypoint altitude as height above
         origin (its own "CAUTION: using height from origin" comment).
 
-        `plan_origin` must be the origin the path was actually PLANNED
-        against, which is the mission's `home` when it sets one and the world
-        origin otherwise -- not unconditionally the world origin. Getting
-        that wrong reintroduces exactly the offset this method exists to
-        remove, just sourced from the launch site instead of the spawn point.
+        The ENU below is measured from the WORLD origin, because that is
+        what anchors the shared `earth` frame AS2 publishes the converted
+        point into. It is emphatically NOT the mission's `home`.
+
+        This took a live run to see. An earlier version measured from the
+        mission home, on the reasoning that the path was planned around it.
+        That silently subtracts the launch site's own offset from the world
+        origin: with a launch station 25 m north-east of the origin, every
+        waypoint came out 25 m short, and all four drones flew their coverage
+        pattern around the world origin instead of around the launch site.
+        The bug was invisible for as long as every test mission used the
+        world origin as its home -- with `home == self.origin` the two
+        readings are identical. It only appears once an operator drops a
+        launch station somewhere else, which is the normal case.
+
+        _return_to_launch is the cross-check: it feeds enu_to_latlon a
+        position taken straight from self_localization/pose, which is already
+        earth-frame, with no home indirection anywhere. Same frame, same
+        transform, and that path was measured landing within 0.2 m.
         """
         gps_origin = getattr(drone, 'gps', None) and drone.gps.origin
         if not gps_origin:
@@ -428,10 +632,10 @@ class MissionExecutor(Node):
             return [[lat, lon, alt] for lat, lon, alt in waypoints]
 
         lat0, lon0, h0 = gps_origin
-        # Mission frame -> earth ENU, using the same origin the path was
-        # planned against.
+        # Waypoint lat/lon -> earth-frame ENU. Anchored at the world origin,
+        # which is what the `earth` frame itself is anchored at.
         enu = geo_utils.latlon_to_enu([(lat, lon) for lat, lon, _ in waypoints],
-                                       plan_origin[0], plan_origin[1], plan_origin[2])
+                                       self.origin[0], self.origin[1], self.origin[2])
         # earth ENU -> lat/lon around THIS drone's origin.
         compensated = geo_utils.enu_to_latlon(enu, lat0, lon0, h0)
 
@@ -629,11 +833,7 @@ class MissionExecutor(Node):
         succeeded = False
         try:
             for ns, drone in interfaces.items():
-                if not self._call_bounded(drone.arm) or not self._call_bounded(drone.offboard):
-                    self._publish_status('error', f'{ns} failed to arm/offboard')
-                    return
-                if not self._wait_armed_offboard(drone):
-                    self._publish_status('error', f'{ns} armed+offboard state never confirmed')
+                if not self._arm_and_offboard(ns, drone):
                     return
 
             self._publish_status('taking_off', 'all drones taking off')
@@ -759,11 +959,7 @@ class MissionExecutor(Node):
         succeeded = False
         try:
             for ns, drone in interfaces.items():
-                if not self._call_bounded(drone.arm) or not self._call_bounded(drone.offboard):
-                    self._publish_status('error', f'{ns} failed to arm/offboard')
-                    return
-                if not self._wait_armed_offboard(drone):
-                    self._publish_status('error', f'{ns} armed+offboard state never confirmed')
+                if not self._arm_and_offboard(ns, drone):
                     return
 
             self._publish_status('taking_off', 'all drones taking off')
@@ -786,8 +982,7 @@ class MissionExecutor(Node):
             def _fly(ns: str, drone: DroneInterfaceGPS, wps: list):
                 try:
                     results[ns] = drone.follow_path(
-                        self._compensate_gps_path(
-                            drone, ns, wps, (origin_lat, origin_lon, origin_alt)),
+                        self._compensate_gps_path(drone, ns, wps),
                         speed=speed)
                 except Exception as e:  # noqa: BLE001 - a bare thread target's exception is
                     # otherwise printed to stderr and silently swallowed, never reaching this

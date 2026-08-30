@@ -1,69 +1,68 @@
-import { useState } from 'react';
 import type { DroneDetectionState } from '../ros/useDetections';
 import './DetectionPanel.css';
 
 interface DetectionPanelProps {
   droneNamespaces: string[];
   byDrone: Record<string, DroneDetectionState>;
-  /** Unique people found (distinct ByteTrack ids), not raw messages. */
   total: number;
-  /** Raw detection messages — a liveness signal, not a person count. */
   observations: number;
 }
 
-/** A detection older than this is shown as stale rather than current. */
-const STALE_AFTER_MS = 5000;
-
-/**
- * Per-drone detector health: how many distinct people each drone has found,
- * how many raw detections that came from, and best confidence.
- *
- * The camera feeds themselves live in VideoPanel, which has room for them —
- * this sits in the 280px sidebar and is a numbers panel only.
- */
 export function DetectionPanel({
-  droneNamespaces, byDrone, total, observations,
+  droneNamespaces,
+  byDrone,
+  total,
+  observations,
 }: DetectionPanelProps) {
-  const [expanded, setExpanded] = useState(true);
-  const now = Date.now();
-
   return (
-    <div className="detection-panel">
-      <button
-        className="detection-panel__header"
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-      >
-        <span>Detection</span>
-        <span
-          className="detection-panel__total"
-          title={`${total} distinct people tracked, from ${observations} raw detections`}
-        >
-          {total} {total === 1 ? 'person' : 'people'}
-        </span>
-        <span className="detection-panel__chevron">{expanded ? '▾' : '▸'}</span>
-      </button>
+    <div className="detection-card-container">
+      <div className="obsidian-card-header">
+        <span>SURVIVOR DETECTIONS</span>
+        <span className="obsidian-badge badge-warning">{total} FOUND</span>
+      </div>
 
-      {expanded && (
-        <div className="detection-panel__body">
-          {droneNamespaces.map((ns) => {
-            const state = byDrone[ns];
-            const stale = !state || now - state.lastSeen > STALE_AFTER_MS;
-            return (
-              <div key={ns} className="detection-panel__row">
-                <span className={`detection-panel__dot ${stale ? '' : 'detection-panel__dot--active'}`} />
-                <span className="detection-panel__name">{ns}</span>
-                <span className="detection-panel__count">
-                  {state ? `${state.trackIds.size} tracked` : '—'}
-                </span>
-                <span className="detection-panel__conf">
-                  {state ? `${state.count} det · ${state.bestConfidence.toFixed(2)}` : ''}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {droneNamespaces.map((ns) => {
+          const state = byDrone[ns];
+          const count = state ? state.trackIds.size : 0;
+
+          return (
+            <div key={ns} className="detection-item-row">
+              <div className="detection-info">
+                <div className="detection-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      backgroundColor: count > 0 ? 'var(--status-warning)' : 'var(--text-subtle)',
+                    }}
+                  />
+                  {ns.toUpperCase()}
+                </div>
+                <span className="detection-sub">
+                  {state ? `${state.count} frames (${observations} obs)` : 'No observations yet'}
                 </span>
               </div>
-            );
-          })}
-        </div>
-      )}
+
+              <div style={{ textAlign: 'right' }}>
+                <span
+                  className="telemetry-val"
+                  style={{
+                    color: count > 0 ? 'var(--status-warning)' : 'var(--text-muted)',
+                    fontSize: 12,
+                  }}
+                >
+                  {count} {count === 1 ? 'Person' : 'Persons'}
+                </span>
+                <div style={{ fontSize: 9, color: 'var(--text-subtle)', fontFamily: 'var(--font-mono)' }}>
+                  {state && state.bestConfidence > 0 ? `${(state.bestConfidence * 100).toFixed(0)}% CONF` : '0%'}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

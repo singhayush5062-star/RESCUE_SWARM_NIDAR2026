@@ -39,11 +39,21 @@ interface CompressedImage {
 }
 
 const DETECTION_THROTTLE_MS = 200;
-/** 2 Hz matches the detector's own default inference rate — asking for more
- * only re-sends frames it has not recomputed. Kept explicitly throttled
- * because unthrottled image topics over rosbridge are what drove this GCS
- * out of memory once already; see useDroneTelemetry. */
-const FEED_THROTTLE_MS = 500;
+/** Deliberately FASTER than the detector's ~2 Hz output rate.
+ *
+ * throttle_rate is a minimum spacing rosbridge enforces before forwarding the
+ * next message, so it adds latency on top of the source rate rather than
+ * replacing it: at 500 ms a frame produced 10 ms after the last delivery
+ * waited a further 490 ms before the operator saw it, on top of the camera
+ * (250 ms) and inference (500 ms) intervals. Setting it below the source
+ * period means a new frame goes out as soon as it exists.
+ *
+ * This does NOT increase bandwidth: the detector only publishes ~2 frames a
+ * second, so nothing extra is created, and queue_length: 1 guarantees a
+ * backlog is dropped rather than played out stale. The memory incident that
+ * made this cautious involved *raw* 3.6 MB frames on an unthrottled topic;
+ * these are ~7 KB JPEGs. */
+const FEED_THROTTLE_MS = 100;
 
 /**
  * Subscribes to detection results from every drone, plus each drone's

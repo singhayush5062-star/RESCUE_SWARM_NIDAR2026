@@ -29,6 +29,9 @@ def _spawn(context):
             LaunchConfiguration('inference_rate_hz').perform(context)),
         'device': LaunchConfiguration('device').perform(context),
         'input_size': int(LaunchConfiguration('input_size').perform(context)),
+        'prefer_ncnn_on_cpu':
+            LaunchConfiguration('prefer_ncnn_on_cpu').perform(context).lower()
+            in ('1', 'true', 'yes'),
     }
     return [
         Node(
@@ -52,12 +55,17 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'model_path',
             default_value='/home/ayush/NIDAR/project_gazebo/models/detection/nidar_person.pt',
-            description='Path to YOLO weights (.pt / .onnx / .engine). Swapping in '
-                        'retrained weights is a copy over this file.'),
+            description='Path to YOLO weights (.pt / .onnx / .engine, or an '
+                        'ncnn export directory). Swapping in retrained weights '
+                        'is a copy over this file.'),
         DeclareLaunchArgument('confidence_threshold', default_value='0.5'),
         DeclareLaunchArgument('inference_rate_hz', default_value='2.0'),
         DeclareLaunchArgument('device', default_value='auto',
                               description="'auto', 'cpu', or a CUDA device index."),
         DeclareLaunchArgument('input_size', default_value='640'),
+        DeclareLaunchArgument(
+            'prefer_ncnn_on_cpu', default_value='true',
+            description='On CPU, load the *_ncnn_model/ export beside model_path '
+                        'when one exists (3x faster, same weights). No effect on GPU.'),
         OpaqueFunction(function=_spawn),
     ])

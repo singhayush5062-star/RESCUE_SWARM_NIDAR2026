@@ -151,6 +151,13 @@ stop_all() {
   # the same way by launch_as2.bash would leak identically — if a new one
   # shows up, add it here the same way.
   pkill -9 -f "static_transform_publisher" 2>/dev/null
+  # Note: this also kills a session the launcher itself might be running in,
+  # so run_simulation.sh cannot be started with `tmux new-session -d`. Killing
+  # only the drone sessions instead was tried and is NOT a safe swap: leaving
+  # the tmux server alive carries stale state into the next launch and the
+  # per-drone AS2 stacks then failed to come up at all (the startup health
+  # check timed out with platform/gimbal_bridge processes missing). Launch
+  # detached with `setsid nohup` rather than from inside tmux.
   tmux kill-server 2>/dev/null
   lsof -ti:"$GCS_PORT" -sTCP:LISTEN 2>/dev/null | xargs -r kill -9
   # Same kill -9-skips-cleanup problem applies to FastDDS's own
@@ -255,8 +262,14 @@ IFS=',' read -r -a DRONE_ARR <<< "$DRONES"
 # instant, and a segfaulted process shows 0 matches immediately rather than
 # eventually — a strictly better signal for exactly the failure this checks
 # for.
+# Startup budget. 60s was tight enough to fail on a loaded machine even when
+# the sim was coming up fine -- 4 drones' AS2 stacks, Gazebo rendering 4
+# cameras, and 4 YOLO models loading onto one GPU all compete during exactly
+# this window, and a false ERROR here tears down a healthy sim. Override with
+# NIDAR_STARTUP_TIMEOUT if a slower machine needs longer still.
+SIM_STARTUP_TIMEOUT="${NIDAR_STARTUP_TIMEOUT:-150}"
 sim_ready=false
-for _ in $(seq 1 60); do
+for _ in $(seq 1 "$SIM_STARTUP_TIMEOUT"); do
   all_up=true
   for d in "${DRONE_ARR[@]}"; do
     if ! pgrep -f "as2_platform_gazebo_node.*__ns:=/${d} " >/dev/null 2>&1 \
@@ -278,7 +291,7 @@ done
 # skipped stop_all() on the way out, leaving Gazebo/tmux orphaned. Confirmed
 # the hard way testing the survivor_actor model swap.
 if [[ "$sim_ready" != "true" ]]; then
-  log "ERROR: sim did not come up within 60s — one or more drones are missing platform/gimbal_bridge processes, check $LOG_DIR/sim.log"
+  log "ERROR: sim did not come up within ${SIM_STARTUP_TIMEOUT}s — one or more drones are missing platform/gimbal_bridge processes, check $LOG_DIR/sim.log"
   stop_all
   exit 1
 fi
@@ -327,14 +340,24 @@ log "NIDAR nodes are up."
 NIDAR_DETECTION="${NIDAR_DETECTION:-true}"
 if [[ "$NIDAR_DETECTION" == "true" ]]; then
   DETECTION_MODEL="${NIDAR_DETECTION_MODEL:-$PROJECT_GAZEBO/models/detection/nidar_person.pt}"
-  if [[ ! -f "$DETECTION_MODEL" ]]; then
+  # -e, not -f: an ncnn export is a DIRECTORY (nidar_person_ncnn_model/), and
+  # -f silently rejected it as "model not found" while detection quietly did
+  # not start at all.
+  if [[ ! -e "$DETECTION_MODEL" ]]; then
     log "WARNING: detection model not found at $DETECTION_MODEL — skipping detection nodes"
   else
-    log "Starting detection nodes (model: $(basename "$DETECTION_MODEL"))..."
+    # 'auto' picks CUDA when torch can genuinely reach it and CPU otherwise;
+    # on CPU the node then loads the ncnn export beside the weights, which is
+    # 3x faster than PyTorch-on-CPU at the same input size. Set
+    # NIDAR_DETECTION_DEVICE=cpu to exercise that ncnn path deliberately --
+    # it is the backend the competition companion computer will actually run,
+    # so being able to test it on a box that HAS a GPU matters.
+    log "Starting detection nodes (model: $(basename "$DETECTION_MODEL"), device: ${NIDAR_DETECTION_DEVICE:-auto})..."
     nohup ros2 launch nidar_detection detection.launch.py \
       "drone_ids:=$DRONES" "model_path:=$DETECTION_MODEL" \
       "inference_rate_hz:=${NIDAR_DETECTION_HZ:-2.0}" \
       "confidence_threshold:=${NIDAR_DETECTION_CONF:-0.5}" \
+      "device:=${NIDAR_DETECTION_DEVICE:-auto}" \
       > "$LOG_DIR/detection.log" 2>&1 &
     sleep 3
     log "Detection nodes are up."

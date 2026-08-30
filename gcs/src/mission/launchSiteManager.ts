@@ -78,15 +78,38 @@ export function generateRandomLaunchSiteInKml(polygon: [number, number][]): [num
     }
   }
 
-  // Fallback to centroid if polygon shape is extremely irregular
   return calculateCentroid(polygon);
 }
 
 /**
- * Approximate area in square meters of a [lat, lon] polygon, via the shoelace
- * formula on an equirectangular projection (same METERS_PER_DEGREE_LAT
- * approximation used throughout this module) -- accurate enough at survey-arena
- * scale, not meant for anything approaching a meaningful fraction of the globe.
+ * Generates a random realistic convex polygon mapping area around a center point.
+ */
+export function generateRandomBoundaryArea(
+  center: [number, number] = [28.682412, 77.499734],
+  radiusMeters: number = 60,
+): [number, number][] {
+  const [centerLat, centerLon] = center;
+  const cosLat = Math.cos((centerLat * Math.PI) / 180.0);
+
+  const numVertices = 5 + Math.floor(Math.random() * 2); // 5 or 6 vertices
+  const angles: number[] = [];
+
+  for (let i = 0; i < numVertices; i++) {
+    angles.push((i * (2 * Math.PI / numVertices)) + (Math.random() * 0.3 - 0.15));
+  }
+
+  angles.sort((a, b) => a - b);
+
+  return angles.map((angle) => {
+    const r = radiusMeters * (0.75 + Math.random() * 0.5); // slight variation in radius
+    const dLat = (r * Math.cos(angle)) / METERS_PER_DEGREE_LAT;
+    const dLon = (r * Math.sin(angle)) / (METERS_PER_DEGREE_LAT * cosLat);
+    return [centerLat + dLat, centerLon + dLon] as [number, number];
+  });
+}
+
+/**
+ * Approximate area in square meters of a [lat, lon] polygon.
  */
 export function calculatePolygonAreaM2(polygon: [number, number][]): number {
   if (!polygon || polygon.length < 3) return 0;
@@ -102,11 +125,6 @@ export function calculatePolygonAreaM2(polygon: [number, number][]): number {
   return Math.abs(sum) / 2.0;
 }
 
-/**
- * Approximate great-circle-ish distance in meters between two [lat, lon] points,
- * accurate enough at the scale of a survey arena (equirectangular approximation,
- * same METERS_PER_DEGREE_LAT constant used throughout this module).
- */
 function approxDistanceMeters(a: [number, number], b: [number, number]): number {
   const cosLat = Math.cos((((a[0] + b[0]) / 2) * Math.PI) / 180.0);
   const dLat = (a[0] - b[0]) * METERS_PER_DEGREE_LAT;
@@ -114,14 +132,6 @@ function approxDistanceMeters(a: [number, number], b: [number, number]): number 
   return Math.sqrt(dLat * dLat + dLon * dLon);
 }
 
-/**
- * Generates `count` random [lat, lon] points strictly inside the boundary
- * polygon, each at least `minSeparationM` apart from every other point already
- * picked in this batch (so a random batch doesn't stack dummies on top of each
- * other). Same bounded-attempts shape as generateRandomLaunchSiteInKml; falls
- * short of `count` (returns however many it found) rather than looping forever
- * on a polygon too small to fit them all with the requested separation.
- */
 export function generateRandomPointsInPolygon(
   polygon: [number, number][],
   count: number,
@@ -149,28 +159,16 @@ export function generateRandomPointsInPolygon(
 }
 
 const FEET_TO_METERS = 0.3048;
-/** Fixed launch/landing area every drone must launch from and land within
- * (competition rule) -- matches LAUNCH_BOX_SIZE_M in
- * nidar_mission_executor/mission_executor_node.py, which validates against
- * and enforces this before teleporting any drone there. */
 export const LAUNCH_BOX_SIZE_FT = 12;
 export const LAUNCH_BOX_SIZE_M = LAUNCH_BOX_SIZE_FT * FEET_TO_METERS;
 
-/**
- * Default starting relative offsets (in meters [dx, dy]) for drones in
- * launch formation around Home -- corners of a 3.2m square, matching
- * world_swarm.yaml's own default spawn xyz, safely inside the 12ft box.
- */
 const DEFAULT_DRONE_OFFSETS: Record<string, [number, number]> = {
-  drone0: [-1.6, -1.6],
-  drone1: [1.6, -1.6],
-  drone2: [-1.6, 1.6],
-  drone3: [1.6, 1.6],
+  drone0: [-1.4, -1.4],
+  drone1: [1.4, -1.4],
+  drone2: [-1.4, 1.4],
+  drone3: [1.4, 1.4],
 };
 
-/**
- * Corners of the fixed 12ft x 12ft launch/landing box, centered on `center`.
- */
 export function launchBoxCorners(center: [number, number]): [number, number][] {
   const half = LAUNCH_BOX_SIZE_M / 2;
   const cosLat = Math.cos((center[0] * Math.PI) / 180.0);
@@ -185,10 +183,6 @@ export function launchBoxCorners(center: [number, number]): [number, number][] {
   ];
 }
 
-/**
- * The default drone formation (DEFAULT_DRONE_OFFSETS, the corners of a 3.2m
- * square) expressed as absolute [lat, lon] around a launch-box centre.
- */
 export function defaultDroneLaunchPositions(
   center: [number, number],
   droneNamespaces: string[] = ['drone0', 'drone1', 'drone2', 'drone3'],
@@ -196,7 +190,7 @@ export function defaultDroneLaunchPositions(
   const cosLat = Math.cos((center[0] * Math.PI) / 180.0);
   const result: Record<string, [number, number]> = {};
   droneNamespaces.forEach((ns, i) => {
-    const [dx, dy] = DEFAULT_DRONE_OFFSETS[ns] ?? [((i % 2) * 2 - 1) * 1.6, (Math.floor(i / 2) * 2 - 1) * 1.6];
+    const [dx, dy] = DEFAULT_DRONE_OFFSETS[ns] ?? [((i % 2) * 2 - 1) * 1.4, (Math.floor(i / 2) * 2 - 1) * 1.4];
     result[ns] = [
       center[0] + dy / METERS_PER_DEGREE_LAT,
       center[1] + dx / (METERS_PER_DEGREE_LAT * cosLat),
@@ -205,14 +199,6 @@ export function defaultDroneLaunchPositions(
   return result;
 }
 
-/**
- * Random per-drone launch positions inside the fixed 12ft launch box, with
- * enough separation to keep drones' rotors clear of each other at spawn.
- * Reuses generateRandomPointsInPolygon (defined below) against the box's
- * own corners as its polygon -- same random-with-minimum-separation
- * mechanism already used for scattering survivor dummies, just constrained
- * to a small fixed square instead of the mapping boundary.
- */
 export function generateRandomDroneLaunchPositions(
   center: [number, number],
   droneNamespaces: string[] = ['drone0', 'drone1', 'drone2', 'drone3'],
@@ -226,9 +212,6 @@ export function generateRandomDroneLaunchPositions(
   return result;
 }
 
-/**
- * Calculates GPS waypoints for a list of drone namespaces centered around a Home Launch Site [homeLat, homeLon].
- */
 export function generateDroneWaypointsAtLaunchSite(
   homeLat: number,
   homeLon: number,
@@ -241,7 +224,7 @@ export function generateDroneWaypointsAtLaunchSite(
 
   for (let i = 0; i < droneNamespaces.length; i++) {
     const ns = droneNamespaces[i];
-    const offset = DEFAULT_DRONE_OFFSETS[ns] || [((i % 2) * 2 - 1) * 2.0, Math.floor(i / 2) * 2.0];
+    const offset = DEFAULT_DRONE_OFFSETS[ns] || [((i % 2) * 2 - 1) * 1.4, Math.floor(i / 2) * 1.4];
 
     const dLon = offset[0] / metersPerDegreeLon;
     const dLat = offset[1] / METERS_PER_DEGREE_LAT;
@@ -252,21 +235,6 @@ export function generateDroneWaypointsAtLaunchSite(
   return result;
 }
 
-/**
- * Helper to update or construct a complete MissionFile object with a specified home launch site and boundary.
- *
- * Deliberately does NOT set `drones` here. mission_file_executor.py dispatches
- * on whether `mission.drones` is populated: non-empty means "fly exactly
- * these pre-supplied per-drone waypoints" (the old sequential-GoTo flow),
- * while boundary-only (no `drones`) means "auto zone-split the boundary and
- * fly a generated lawnmower coverage pattern" (the Phase 1 flow this feature
- * is actually meant to trigger). generateDroneWaypointsAtLaunchSite's output
- * is single hover points, not a flight plan -- it's only ever meant as a
- * launch-formation *preview* (MapView.tsx renders it separately, straight
- * from mission.home, without reading mission.drones at all). Setting it here
- * previously made every GUI-drawn/launch-site mission silently skip the
- * coverage flow entirely and just hop each drone to its formation offset.
- */
 export function createMissionFromLaunchSiteAndBoundary(
   boundary: [number, number][],
   home: [number, number],

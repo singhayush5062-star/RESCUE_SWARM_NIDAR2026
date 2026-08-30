@@ -2,6 +2,10 @@
 framework_ws/build/
 framework_ws/install/
 framework_ws/log/
+**/build/
+**/install/
+**/log/
+
 
 # Node / Web / GCS dependencies & build outputs
 node_modules/
