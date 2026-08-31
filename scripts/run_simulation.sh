@@ -225,6 +225,27 @@ log "Loading ROS/Gazebo environment..."
 source "$SCRIPT_DIR/setup_nidar_ros.sh"
 
 # ---------------------------------------------------------------------------
+# 2b. Runtime Python dependency check.
+#
+# Runs here, after setup_nidar_ros.sh has stripped conda from PATH, so it
+# checks the SAME interpreter the nodes will use -- and before the ~90s of
+# Gazebo/AS2 startup, so a missing package is reported in seconds rather than
+# discovered later as "the video is black".
+#
+# Does not abort: a missing ML package costs detection and video but the
+# drones still fly, and blocking a flight test over websocket-client would be
+# worse than the warning. The banner at the end repeats the verdict so a
+# degraded launch cannot be mistaken for a healthy one -- same reasoning as
+# the telemetry gate.
+# ---------------------------------------------------------------------------
+log "Checking runtime Python dependencies..."
+if python3 "$SCRIPT_DIR/check_dependencies.py"; then
+  DEPS_LINE=" Deps:        all runtime Python packages present"
+else
+  DEPS_LINE=" Deps:        MISSING -- detection and the GCS video feed will not work"
+fi
+
+# ---------------------------------------------------------------------------
 # 3. Drone list: default to every drone in world_swarm.yaml (not a hardcoded
 #    subset) so Gazebo's spawned entities and AS2's running nodes always match.
 # ---------------------------------------------------------------------------
@@ -429,6 +450,7 @@ echo "================================================================"
 echo " NIDAR RescueSwarm simulation is up"
 echo "================================================================"
 echo "$TELEMETRY_LINE"
+echo "$DEPS_LINE"
 echo " GCS:         http://localhost:$GCS_PORT"
 echo " rosbridge:   ws://localhost:9090"
 echo " Drones:      $DRONES"

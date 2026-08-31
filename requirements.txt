@@ -1,0 +1,43 @@
+# Python packages the NIDAR runtime needs that ROS/apt does NOT provide.
+#
+# Why this file exists: on 2026-08-31 `filelock` disappeared from the user
+# site-packages (it arrives as a torch dependency, so nothing here had asked
+# for it by name). ultralytics imports it deep in a lazy import chain, so all
+# four detection nodes died at startup with ModuleNotFoundError -- and because
+# the GCS video feed is published BY those nodes, the operator lost the camera
+# view and every detection at once, with no warning until someone read
+# /tmp/nidar_sim_logs/detection.log. Naming every runtime import here, and
+# checking them before launch, is what stops that being silent.
+#
+# Install into the SAME interpreter the simulator uses -- system python3.10,
+# never conda's (scripts/setup_nidar_ros.sh strips conda from PATH for exactly
+# this reason, and conda's python breaks rclpy):
+#
+#   /usr/bin/python3 -m pip install --user -r requirements.txt
+#
+# Deliberately NOT listed: numpy, PyYAML, scipy, pymap3d and cv2. Those live in
+# /usr/lib/python3/dist-packages and are managed by apt/ROS. Pinning them here
+# would invite pip to shadow an apt-managed package with a different build,
+# which is a good way to break cv_bridge. scripts/check_dependencies.py still
+# verifies they are importable -- it just tells you to use apt to fix them.
+#
+# Versions are those measured working on this machine. torch is pinned without
+# its local build segment: "==2.6.0" is satisfied by the installed
+# 2.6.0+cu124, so this does not force a reinstall or lose the CUDA build.
+
+# --- person detection stack -------------------------------------------------
+ultralytics==8.4.129
+torch==2.6.0
+torchvision==0.21.0
+# ncnn is the CPU inference backend used when no GPU is available.
+ncnn==1.0.20260526
+# Pulled in by ultralytics' lazy import chain (ultralytics/data/converter.py)
+# and by its ByteTrack tracker. Neither is imported by our own code, so both
+# are easy to lose silently -- which is exactly what happened to filelock.
+filelock==3.32.4
+lap==0.5.13
+
+# --- tooling ----------------------------------------------------------------
+# scripts/check_telemetry.py talks to rosbridge over a websocket.
+websocket-client==1.9.0
+portalocker==4.3.0
